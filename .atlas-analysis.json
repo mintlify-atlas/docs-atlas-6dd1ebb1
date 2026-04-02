@@ -1,24 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Forest",
+  "projectType": "infrastructure",
+  "projectName": "Forest",
+  "projectDescription": "A high-performance Filecoin full node written in Rust, providing blockchain synchronization, JSON-RPC API, wallet management, and snapshot generation.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#4fc674",
-    "light": "#57ed86",
-    "dark": "#499171"
-  },
-  "favicon": "https://media.brand.dev/ad088292-badc-4c85-9beb-e1bb4ab2bafc.png",
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/ChainSafe/forest"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/ChainSafe/forest"
-    }
-  },
+  "primaryColor": "#4fc674",
+  "lightColor": "#57ed86",
+  "darkColor": "#499171",
   "navigation": {
     "tabs": [
       {
@@ -88,5 +75,41 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Filecoin blockchain synchronization (mainnet, calibnet, devnet)",
+    "High-performance JSON-RPC API server compatible with Lotus",
+    "Ethereum compatibility layer (EVM transactions, EIP-1559)",
+    "Built-in wallet management and FIL transfers",
+    "Blockchain snapshot import/export (faster and less memory than Lotus)",
+    "F3 (Fast Finality) sidecar support",
+    "Prometheus metrics, health check endpoints, and Grafana integration",
+    "P2P networking via libp2p (Kademlia DHT, gossipsub, bitswap)",
+    "Docker-first deployment with multi-platform support",
+    "RPC method filtering for public node operators"
+  ],
+  "publicApiSurface": [
+    "forest (daemon binary)",
+    "forest-cli (RPC client CLI)",
+    "forest-wallet (wallet management CLI)",
+    "forest-tool (maintenance utilities CLI)",
+    "Filecoin.ChainGetTipSet",
+    "Filecoin.ChainGetBlock",
+    "Filecoin.ChainExport",
+    "Filecoin.StateCall",
+    "Filecoin.StateCompute",
+    "Filecoin.MpoolPush",
+    "Filecoin.WalletNew",
+    "Filecoin.WalletBalance",
+    "Filecoin.WalletSign",
+    "Filecoin.SyncStatus",
+    "eth_call",
+    "eth_sendTransaction",
+    "eth_getTransactionReceipt",
+    "eth_subscribe",
+    "eth_getBalance",
+    "/livez health endpoint",
+    "/readyz health endpoint",
+    "/metrics Prometheus endpoint"
+  ]
 }

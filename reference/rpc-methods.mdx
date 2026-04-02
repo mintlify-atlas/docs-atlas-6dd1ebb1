@@ -1,0 +1,1440 @@
+---
+title: "RPC Methods"
+description: "Complete reference for Forest JSON-RPC methods organised by namespace: Chain, State, Mpool, Wallet, Net, Sync, Gas, and Ethereum-compatible methods."
+---
+
+Forest implements hundreds of RPC methods across multiple namespaces. This page covers the most commonly used methods. The complete machine-readable specification is available at `http://localhost:2345/openrpc`.
+
+<Note>
+All methods use the `Filecoin.*` prefix when called directly. Ethereum-compatible methods also have lowercase `eth_*` aliases — for example, `Filecoin.EthBlockNumber` and `eth_blockNumber` are identical.
+</Note>
+
+---
+
+## Chain Methods (`Filecoin.Chain*`)
+
+Chain methods query the blockchain: blocks, tipsets, messages, and raw IPLD objects.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.ChainHead">
+    Returns the current chain head — the heaviest tipset known to the node.
+
+    **Authentication:** none required
+
+    <CodeGroup>
+      ```json Request
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "Filecoin.ChainHead",
+        "params": []
+      }
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Cids": [
+            { "/": "bafy2bzacedq3uxgpq6ot6lq3bzrqdcrxkpd3m3ugq3zrdh63x5lppmvmr5zwo" }
+          ],
+          "Blocks": [
+            {
+              "Miner": "f01234",
+              "Height": 4200000,
+              "Timestamp": 1720000000,
+              "ParentWeight": "123456789"
+            }
+          ],
+          "Height": 4200000
+        }
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="Cids" type="array">
+      Array of CIDs identifying the block headers in this tipset.
+    </ResponseField>
+    <ResponseField name="Blocks" type="array">
+      Array of `BlockHeader` objects in the tipset.
+    </ResponseField>
+    <ResponseField name="Height" type="integer">
+      The epoch number (height) of this tipset.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetTipSet">
+    Returns the tipset identified by a tipset key (array of block CIDs).
+
+    **Authentication:** none required
+
+    <ParamField body="tipsetKey" type="array" required>
+      Array of block CIDs that form the tipset key. Pass `null` to get the chain head.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.ChainGetTipSet",
+          "params": [[{ "/": "bafy2bzacedq3uxgpq6ot6lq3bzrqdcrxkpd3m3ugq3zrdh63x5lppmvmr5zwo" }]]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Cids": [{ "/": "bafy2bzaced..." }],
+          "Blocks": [{ "Miner": "f01234", "Height": 4200000 }],
+          "Height": 4200000
+        }
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetTipSetByHeight">
+    Returns the tipset at the specified epoch height, searching back from an optional tipset key.
+
+    **Authentication:** none required
+
+    <ParamField body="height" type="integer" required>
+      The epoch number to look up.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Optional tipset key to start searching back from. Pass `null` to search from chain head.
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.ChainGetTipSetByHeight","params":[4100000, null]}'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetBlock">
+    Returns the block header for a given block CID.
+
+    **Authentication:** none required
+
+    <ParamField body="blockCid" type="CID" required>
+      The CID of the block header to retrieve.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.ChainGetBlock",
+          "params": [{ "/": "bafy2bzacedq3uxgpq6ot6lq3bzrqdcrxkpd3m3ugq3zrdh63x5lppmvmr5zwo" }]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Miner": "f01234",
+          "Height": 4200000,
+          "Parents": [{ "/": "bafy2bzace..." }],
+          "ParentWeight": "123456789",
+          "Timestamp": 1720000000
+        }
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="Miner" type="string">
+      The Filecoin address of the miner that produced this block.
+    </ResponseField>
+    <ResponseField name="Height" type="integer">
+      Epoch number of the block.
+    </ResponseField>
+    <ResponseField name="Timestamp" type="integer">
+      Unix timestamp of the block.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetMessage">
+    Returns a message by its CID.
+
+    **Authentication:** none required
+
+    <ParamField body="messageCid" type="CID" required>
+      The CID of the message to retrieve.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.ChainGetMessage",
+          "params": [{ "/": "bafy2bzacec..." }]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Version": 0,
+          "To": "f01234",
+          "From": "f1abc...",
+          "Nonce": 42,
+          "Value": "1000000000000000000",
+          "GasLimit": 10000000,
+          "GasFeeCap": "100",
+          "GasPremium": "1",
+          "Method": 0,
+          "Params": null
+        }
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetBlockMessages">
+    Returns all messages (signed and unsigned) included in a block.
+
+    **Authentication:** none required
+
+    <ParamField body="blockCid" type="CID" required>
+      The CID of the block to retrieve messages from.
+    </ParamField>
+
+    <ResponseField name="BlsMessages" type="array">
+      Unsigned BLS-signed messages included in the block.
+    </ResponseField>
+    <ResponseField name="SecpkMessages" type="array">
+      Signed secp256k1 messages included in the block.
+    </ResponseField>
+    <ResponseField name="Cids" type="array">
+      CIDs of all messages (BLS first, then secpk).
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetParentMessages">
+    Returns the messages included in the parent tipset of the given block.
+
+    **Authentication:** none required
+
+    <ParamField body="blockCid" type="CID" required>
+      A block CID from the child tipset. The method returns messages from its parent tipset.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetParentReceipts">
+    Returns the execution receipts for all messages in the parent tipset of a given block.
+
+    **Authentication:** none required
+
+    <ParamField body="blockCid" type="CID" required>
+      A block CID from the child tipset.
+    </ParamField>
+
+    <ResponseField name="[].ExitCode" type="integer">
+      VM exit code (0 = success).
+    </ResponseField>
+    <ResponseField name="[].Return" type="string">
+      Base64-encoded return value from the message execution.
+    </ResponseField>
+    <ResponseField name="[].GasUsed" type="integer">
+      Gas consumed by the message.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainExport">
+    Exports the chain to a CAR file. This is a resource-intensive operation — restrict it on public nodes.
+
+    **Authentication:** `admin` required
+
+    <ParamField body="params" type="object" required>
+      Export parameters including the tipset key, epoch range, and output path.
+    </ParamField>
+
+    <Warning>
+      `ChainExport` is extremely compute- and disk-intensive. It is recommended to block this method on public RPC nodes using [RPC method filtering](/guides/rpc-filtering).
+    </Warning>
+
+    ```plaintext filter-list.txt
+    # Disable snapshot export on public nodes
+    !Filecoin.ChainExport
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.ChainGetFinalizedTipSet">
+    Returns the latest F3-finalized tipset, or falls back to EC (Expected Consensus) finality if F3 is not running or if the F3-finalized tipset is further back than the EC-finalized tipset.
+
+    **Authentication:** none required
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.ChainGetFinalizedTipSet","params":[]}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## State Methods (`Filecoin.State*`)
+
+State methods query actor state from the Filecoin Virtual Machine. These calls do not modify chain state.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.StateGetActor">
+    Returns the actor object (balance, nonce, code CID, state CID) for a given address.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      Filecoin address (f0/f1/f2/f3/f4 format).
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset key to query at. Pass `null` for the chain head.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.StateGetActor",
+          "params": ["f01234", null]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Code": { "/": "bafk2bzacedp..." },
+          "Head": { "/": "bafy2bzacee..." },
+          "Nonce": 5,
+          "Balance": "5000000000000000000",
+          "DelegatedAddress": null
+        }
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="Code" type="CID">
+      CID of the actor's code (identifies the actor type).
+    </ResponseField>
+    <ResponseField name="Head" type="CID">
+      CID of the actor's state root.
+    </ResponseField>
+    <ResponseField name="Nonce" type="integer">
+      Message nonce (for account actors, the number of sent messages).
+    </ResponseField>
+    <ResponseField name="Balance" type="string">
+      Actor balance in attoFIL.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateCall">
+    Executes a message against the current (or specified) state without committing any changes. Useful for simulating calls without spending gas.
+
+    **Authentication:** none required
+
+    <ParamField body="message" type="object" required>
+      The message to execute. Requires `To`, `From`, `Method`, and `Params` at minimum.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset to execute against. Pass `null` for the chain head.
+    </ParamField>
+
+    <ResponseField name="MsgRct.ExitCode" type="integer">
+      Exit code from the simulated execution.
+    </ResponseField>
+    <ResponseField name="MsgRct.Return" type="string">
+      Base64-encoded return data.
+    </ResponseField>
+    <ResponseField name="MsgRct.GasUsed" type="integer">
+      Gas that would be used.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateCompute">
+    Applies a set of messages to a tipset and returns the resulting state. This is very resource-intensive and should be restricted on public nodes.
+
+    **Authentication:** none required (but recommend restricting on public nodes)
+
+    <ParamField body="epoch" type="integer" required>
+      The epoch to compute state at.
+    </ParamField>
+    <ParamField body="messages" type="array" required>
+      Array of messages to apply.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array" required>
+      Tipset key to start from.
+    </ParamField>
+
+    <Warning>
+      `StateCompute` is CPU-intensive. Block it on public nodes: add `!Filecoin.StateCompute` to your filter list.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateGetNetworkParams">
+    Returns the current network parameters including supported proof types, consensus miner minimum power, and sector sizes.
+
+    **Authentication:** none required
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.StateGetNetworkParams","params":[]}'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.StateMinerInfo">
+    Returns information about a storage miner actor including owner address, worker address, peer ID, and sector size.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      The miner's Filecoin address (e.g. `f01234`).
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset key to query at. Pass `null` for the chain head.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.StateMinerInfo",
+          "params": ["f01234", null]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "Owner": "f1abc...",
+          "Worker": "f1def...",
+          "NewWorker": null,
+          "PeerId": "12D3KooW...",
+          "SectorSize": 34359738368,
+          "WindowPoStProofType": 3
+        }
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateReplay">
+    Re-executes a message that was previously included in the chain and returns the execution trace.
+
+    **Authentication:** none required (but recommend restricting on public nodes)
+
+    <ParamField body="tipsetKey" type="array" required>
+      The tipset key of the tipset that included the message.
+    </ParamField>
+    <ParamField body="messageCid" type="CID" required>
+      The CID of the message to replay.
+    </ParamField>
+
+    <ResponseField name="MsgCid" type="CID">
+      CID of the replayed message.
+    </ResponseField>
+    <ResponseField name="Msg" type="object">
+      The message that was replayed.
+    </ResponseField>
+    <ResponseField name="MsgRct" type="object">
+      Execution receipt including exit code, return value, and gas used.
+    </ResponseField>
+    <ResponseField name="ExecutionTrace" type="object">
+      Full execution trace including subcalls.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateNetworkVersion">
+    Returns the network version (protocol version number) at the given tipset.
+
+    **Authentication:** none required
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.StateNetworkVersion","params":[null]}'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.StateSearchMsg">
+    Searches for a message CID on chain and returns the tipset and receipt when found.
+
+    **Authentication:** none required
+
+    <ParamField body="from" type="array" required>
+      Tipset key to start searching from (tipset CIDs array).
+    </ParamField>
+    <ParamField body="cid" type="CID" required>
+      The message CID to search for.
+    </ParamField>
+    <ParamField body="limit" type="integer" required>
+      Maximum number of epochs to search back.
+    </ParamField>
+    <ParamField body="allowReplaced" type="boolean" required>
+      Whether to include replaced messages.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.StateWaitMsg">
+    Waits for a message to appear on chain and returns the receipt. Blocks until the message is found or the timeout is reached.
+
+    **Authentication:** none required
+
+    <ParamField body="cid" type="CID" required>
+      The message CID to wait for.
+    </ParamField>
+    <ParamField body="confidence" type="integer" required>
+      Number of additional epochs to wait after the message is found (for finality).
+    </ParamField>
+    <ParamField body="limit" type="integer" required>
+      Maximum number of epochs to wait.
+    </ParamField>
+    <ParamField body="allowReplaced" type="boolean" required>
+      Whether to accept a replaced message.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Message Pool Methods (`Filecoin.Mpool*`)
+
+The message pool (mpool) holds pending messages that have been submitted but not yet included in a block.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.MpoolGetNonce">
+    Returns the next valid nonce for an address, accounting for both on-chain state and any pending messages in the pool.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      The sender address to get the nonce for.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.MpoolGetNonce",
+          "params": ["f1abc..."]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": 42
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.MpoolPush">
+    Submits a signed message to the message pool for inclusion in a future block.
+
+    **Authentication:** `write` required
+
+    <ParamField body="signedMessage" type="object" required>
+      A signed message object with `Message` and `Signature` fields.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer <TOKEN>" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "Filecoin.MpoolPush",
+          "params": [{
+            "Message": {
+              "Version": 0,
+              "To": "f1...",
+              "From": "f1...",
+              "Nonce": 42,
+              "Value": "1000",
+              "GasLimit": 1000000,
+              "GasFeeCap": "100000",
+              "GasPremium": "100",
+              "Method": 0,
+              "Params": null
+            },
+            "Signature": {
+              "Type": 1,
+              "Data": "base64encodeddata..."
+            }
+          }]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "/": "bafy2bzacec..." }
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="result" type="CID">
+      The CID of the submitted message.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.MpoolPending">
+    Returns all messages currently in the message pool (pending inclusion in a block).
+
+    **Authentication:** none required
+
+    <ParamField body="tipsetKey" type="array" required>
+      Tipset key to evaluate pending messages against. Pass `null` for the chain head.
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.MpoolPending","params":[null]}'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.MpoolSelect">
+    Selects messages from the pool that would be included in the next block, applying miner selection logic.
+
+    **Authentication:** none required
+
+    <ParamField body="tipsetKey" type="array" required>
+      The tipset to select messages for.
+    </ParamField>
+    <ParamField body="ticketQuality" type="number" required>
+      A float between 0 and 1 representing the miner's ticket quality (affects selection).
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.MpoolPushMessage">
+    Signs and submits a message in one step. The node signs the message with the key matching the `From` address (which must be in the node's wallet).
+
+    **Authentication:** `sign` required
+
+    <ParamField body="message" type="object" required>
+      An unsigned message. The node will fill in the nonce and sign with the `From` address.
+    </ParamField>
+    <ParamField body="spec" type="object" required>
+      Message send spec (max fee, gas overestimation).
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Wallet Methods (`Filecoin.Wallet*`)
+
+Wallet methods manage cryptographic keys and sign Filecoin messages. Most require at least `sign` permission.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.WalletNew">
+    Creates a new wallet key and returns the address.
+
+    **Authentication:** `write` required
+
+    <ParamField body="keyType" type="string" required>
+      Key type: `"secp256k1"` or `"bls"`.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer <TOKEN>" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.WalletNew","params":["secp256k1"]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "f1abc123..."
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletBalance">
+    Returns the FIL balance of a wallet address in attoFIL.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      The Filecoin address to query.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.WalletBalance","params":["f1abc..."]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "5000000000000000000"
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="result" type="string">
+      Balance in attoFIL (1 FIL = 10^18 attoFIL).
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletList">
+    Returns all wallet addresses stored in the node's keystore.
+
+    **Authentication:** `write` required
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <TOKEN>" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.WalletList","params":[]}'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletSign">
+    Signs arbitrary bytes with the key for the specified address.
+
+    **Authentication:** `sign` required
+
+    <ParamField body="address" type="string" required>
+      The address whose private key should be used for signing.
+    </ParamField>
+    <ParamField body="data" type="string" required>
+      Base64-encoded bytes to sign.
+    </ParamField>
+
+    <ResponseField name="Type" type="integer">
+      Signature type (1 = secp256k1, 2 = BLS).
+    </ResponseField>
+    <ResponseField name="Data" type="string">
+      Base64-encoded signature bytes.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletSignMessage">
+    Signs a Filecoin message with the key for the `From` address and returns a `SignedMessage`.
+
+    **Authentication:** `sign` required
+
+    <ParamField body="address" type="string" required>
+      Address whose key to sign with (must match `From` in the message).
+    </ParamField>
+    <ParamField body="message" type="object" required>
+      The unsigned message to sign.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletVerify">
+    Verifies that a signature was produced by a specific address over specific data.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      The claimed signer's address.
+    </ParamField>
+    <ParamField body="data" type="string" required>
+      Base64-encoded bytes that were signed.
+    </ParamField>
+    <ParamField body="signature" type="object" required>
+      The `Signature` object to verify.
+    </ParamField>
+
+    <ResponseField name="result" type="boolean">
+      `true` if the signature is valid for the given address and data.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.WalletDefaultAddress">
+    Returns the default wallet address configured on the node.
+
+    **Authentication:** `write` required
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <TOKEN>" \
+      -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.WalletDefaultAddress","params":[]}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Net Methods (`Filecoin.Net*`)
+
+Net methods manage the node's libp2p peer-to-peer connections.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.NetPeers">
+    Returns a list of all peers currently connected to the node.
+
+    **Authentication:** none required
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.NetPeers","params":[]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": [
+          {
+            "ID": "12D3KooWAbc...",
+            "Addrs": ["/ip4/1.2.3.4/tcp/1347"]
+          }
+        ]
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.NetAddrsListen">
+    Returns the multiaddresses the node is currently listening on, along with its peer ID.
+
+    **Authentication:** none required
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.NetAddrsListen","params":[]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "ID": "12D3KooWXyz...",
+          "Addrs": [
+            "/ip4/0.0.0.0/tcp/1347",
+            "/ip6/::/tcp/1347"
+          ]
+        }
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="Filecoin.NetConnect">
+    Initiates a connection to a peer at the specified multiaddr.
+
+    **Authentication:** `write` required
+
+    <ParamField body="peerInfo" type="object" required>
+      Object with `ID` (peer ID string) and `Addrs` (array of multiaddr strings).
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <TOKEN>" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "Filecoin.NetConnect",
+        "params": [{
+          "ID": "12D3KooWAbc...",
+          "Addrs": ["/ip4/1.2.3.4/tcp/1347"]
+        }]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.NetDisconnect">
+    Disconnects from the peer with the given peer ID.
+
+    **Authentication:** `write` required
+
+    <ParamField body="peerId" type="string" required>
+      The peer ID to disconnect from.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Sync Methods (`Filecoin.Sync*`)
+
+Sync methods expose the node's chain synchronisation state.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.SyncState">
+    Returns the current synchronisation status of the node, including active sync workers and their progress.
+
+    **Authentication:** none required
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.SyncState","params":[]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "ActiveSyncs": [
+            {
+              "WorkerID": 0,
+              "Base": { "Height": 4199900 },
+              "Target": { "Height": 4200000 },
+              "Stage": 4,
+              "Height": 4199980,
+              "Start": "2024-01-01T00:00:00Z",
+              "End": null,
+              "Message": ""
+            }
+          ],
+          "VMApplied": 0
+        }
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="ActiveSyncs[].Stage" type="integer">
+      Sync stage: 0=idle, 1=headers, 2=persisting headers, 3=messages, 4=complete, 5=error.
+    </ResponseField>
+    <ResponseField name="ActiveSyncs[].Height" type="integer">
+      The most recent epoch processed by this sync worker.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="Filecoin.SyncSubmitBlock">
+    Submits a newly mined block to the network. Used by mining implementations.
+
+    **Authentication:** `write` required
+
+    <ParamField body="block" type="object" required>
+      The `BlockMsg` object containing the block header, BLS messages, and secpk messages.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.SyncCheckBad">
+    Checks whether a block CID is in the node's bad block cache.
+
+    **Authentication:** none required
+
+    <ParamField body="blockCid" type="CID" required>
+      The CID to check.
+    </ParamField>
+
+    <ResponseField name="result" type="string">
+      Empty string if not bad; otherwise a description of why the block was marked bad.
+    </ResponseField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Gas Methods (`Filecoin.Gas*`)
+
+Gas methods help estimate transaction fees before submitting messages.
+
+<AccordionGroup>
+  <Accordion title="Filecoin.GasEstimateMessageGas">
+    Estimates all gas parameters for a message (`GasLimit`, `GasFeeCap`, `GasPremium`) in one call.
+
+    **Authentication:** none required
+
+    <ParamField body="message" type="object" required>
+      The unsigned message to estimate gas for.
+    </ParamField>
+    <ParamField body="spec" type="object" required>
+      Message send spec including `MaxFee` in attoFIL.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset to estimate against. Pass `null` for the chain head.
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "Filecoin.GasEstimateMessageGas",
+        "params": [
+          {
+            "To": "f1...",
+            "From": "f1...",
+            "Value": "1000",
+            "Method": 0,
+            "Params": null
+          },
+          { "MaxFee": "1000000000000000" },
+          null
+        ]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="Filecoin.GasEstimateFeeCap">
+    Estimates a suitable `GasFeeCap` for a message based on the current base fee and network conditions.
+
+    **Authentication:** none required
+
+    <ParamField body="message" type="object" required>
+      The message to estimate for.
+    </ParamField>
+    <ParamField body="maxqueueblks" type="integer" required>
+      Number of blocks to optimise for inclusion within.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset key. Pass `null` for the chain head.
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.GasEstimateGasPremium">
+    Estimates a suitable `GasPremium` (miner tip) to achieve inclusion within the specified number of blocks.
+
+    **Authentication:** none required
+
+    <ParamField body="nblocksincl" type="integer" required>
+      Target number of blocks for inclusion.
+    </ParamField>
+    <ParamField body="sender" type="string" required>
+      The sender address (used to look up any pending nonces).
+    </ParamField>
+    <ParamField body="gaslimit" type="integer" required>
+      The gas limit of the message.
+    </ParamField>
+    <ParamField body="tipsetKey" type="array">
+      Tipset key. Pass `null` for chain head.
+    </ParamField>
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Ethereum Methods (`eth_*` / `Filecoin.Eth*`)
+
+Forest implements the standard Ethereum JSON-RPC API for use with Ethereum-compatible tooling. Every `Filecoin.Eth*` method has an equivalent lowercase `eth_*` alias.
+
+<Note>
+Ethereum addresses map to Filecoin f4 (delegated) addresses. The chain ID for Filecoin mainnet is `314`, and for Calibnet is `314159`. Set this in MetaMask or your Ethereum library's network config.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="eth_blockNumber / Filecoin.EthBlockNumber">
+    Returns the most recent block number (equivalent to the current chain height).
+
+    **Authentication:** none required
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "0x401b14"
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="eth_getBalance / Filecoin.EthGetBalance">
+    Returns the balance of an Ethereum address at the specified block state.
+
+    **Authentication:** none required
+
+    <ParamField body="address" type="string" required>
+      The Ethereum address (hex, 0x-prefixed).
+    </ParamField>
+    <ParamField body="blockParam" type="string" required>
+      Block number in hex, or a tag: `"latest"`, `"earliest"`, `"pending"`, `"finalized"`, `"safe"`.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "eth_getBalance",
+          "params": ["0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", "latest"]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "0xde0b6b3a7640000"
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="eth_call / Filecoin.EthCall">
+    Executes a message call immediately without creating a transaction on the blockchain. Used to call read-only contract functions.
+
+    **Authentication:** none required
+
+    <ParamField body="tx" type="object" required>
+      Transaction call object with `from`, `to`, `data`, `value`, `gas`, and `gasPrice`.
+    </ParamField>
+    <ParamField body="blockParam" type="string" required>
+      Block number or tag (`"latest"`, `"finalized"`, etc.)
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [
+          {
+            "from": null,
+            "to": "0x1112da864d5b3a9e23bbdb543699351a694f814d",
+            "data": "0x4018d9aa000000000000000000000000000000000000000000000000000000000000007b"
+          },
+          "latest"
+        ]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_estimateGas / Filecoin.EthEstimateGas">
+    Estimates the gas required to execute a transaction.
+
+    **Authentication:** none required
+
+    <ParamField body="tx" type="object" required>
+      Transaction object to estimate gas for.
+    </ParamField>
+    <ParamField body="blockParam" type="string">
+      Optional block number or tag. Defaults to `"latest"`.
+    </ParamField>
+
+    <ResponseField name="result" type="string">
+      Estimated gas in hex.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="eth_getTransactionByHash / Filecoin.EthGetTransactionByHash">
+    Returns transaction information by transaction hash.
+
+    **Authentication:** none required
+
+    <ParamField body="txHash" type="string" required>
+      The transaction hash (0x-prefixed, 32-byte hex).
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "eth_getTransactionByHash",
+          "params": ["0x90aa2b46..."]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "hash": "0x90aa2b46...",
+          "from": "0xabc...",
+          "to": "0xdef...",
+          "value": "0x0",
+          "gas": "0x..." ,
+          "gasPrice": "0x...",
+          "nonce": "0x1",
+          "blockHash": "0x...",
+          "blockNumber": "0x401b14",
+          "transactionIndex": "0x0"
+        }
+      }
+      ```
+    </CodeGroup>
+  </Accordion>
+
+  <Accordion title="eth_getTransactionReceipt / Filecoin.EthGetTransactionReceipt">
+    Returns the receipt of a mined transaction.
+
+    **Authentication:** none required
+
+    <ParamField body="txHash" type="string" required>
+      The transaction hash.
+    </ParamField>
+
+    <ResponseField name="status" type="string">
+      `"0x1"` for success, `"0x0"` for failure.
+    </ResponseField>
+    <ResponseField name="gasUsed" type="string">
+      Gas used by this transaction (hex).
+    </ResponseField>
+    <ResponseField name="logs" type="array">
+      Array of EVM log objects emitted by the transaction.
+    </ResponseField>
+    <ResponseField name="contractAddress" type="string">
+      If the transaction deployed a contract, the contract address. Otherwise `null`.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="eth_sendRawTransaction / Filecoin.EthSendRawTransaction">
+    Broadcasts a signed and RLP-encoded transaction to the network.
+
+    **Authentication:** none required
+
+    <ParamField body="rawTx" type="string" required>
+      RLP-encoded signed transaction (hex, 0x-prefixed). Supports legacy, EIP-155, and EIP-1559 formats.
+    </ParamField>
+
+    <CodeGroup>
+      ```bash Request
+      curl -X POST http://localhost:2345/rpc/v1 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "eth_sendRawTransaction",
+          "params": ["0x02f86f8201..."]
+        }'
+      ```
+      ```json Response
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "0x90aa2b46..."
+      }
+      ```
+    </CodeGroup>
+
+    <ResponseField name="result" type="string">
+      The transaction hash of the submitted transaction.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="eth_getLogs / Filecoin.EthGetLogs">
+    Returns EVM event logs matching a filter specification.
+
+    **Authentication:** none required
+
+    <ParamField body="ethFilter" type="object" required>
+      Filter spec with optional `fromBlock`, `toBlock`, `address`, and `topics` fields.
+    </ParamField>
+
+    ```bash
+    curl -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_getLogs",
+        "params": [{
+          "fromBlock": "0x400000",
+          "toBlock": "latest",
+          "address": "0x1112da864d5b3a9e23bbdb543699351a694f814d",
+          "topics": []
+        }]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_subscribe / Filecoin.EthSubscribe">
+    Creates a real-time subscription over WebSocket. Must be called over a WebSocket connection.
+
+    **Authentication:** none required
+
+    Available subscription types: `newHeads`, `logs`, `newPendingTransactions`.
+
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "eth_subscribe",
+      "params": ["newHeads"]
+    }
+    ```
+
+    Subscribe to filtered logs:
+
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "eth_subscribe",
+      "params": [
+        "logs",
+        {
+          "address": "0x1112da864d5b3a9e23bbdb543699351a694f814d",
+          "topics": []
+        }
+      ]
+    }
+    ```
+
+    <ResponseField name="result" type="string">
+      Subscription ID used to cancel with `eth_unsubscribe`.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="eth_unsubscribe / Filecoin.EthUnsubscribe">
+    Cancels an active WebSocket subscription.
+
+    **Authentication:** none required
+
+    <ParamField body="subscriptionId" type="string" required>
+      The subscription ID returned by `eth_subscribe`.
+    </ParamField>
+
+    <ResponseField name="result" type="boolean">
+      `true` if the subscription was successfully cancelled.
+    </ResponseField>
+  </Accordion>
+
+  <Accordion title="debug_traceTransaction">
+    Re-executes an existing on-chain transaction and returns detailed execution traces. Supports `callTracer`, `flatCallTracer`, and `prestateTracer`.
+
+    **Authentication:** none required
+
+    <ParamField body="txHash" type="string" required>
+      The hash of a mined transaction to trace.
+    </ParamField>
+    <ParamField body="options" type="object">
+      Tracer options. `tracer` selects the tracer type (defaults to `callTracer`). `tracerConfig` passes tracer-specific options such as `diffMode` for `prestateTracer`.
+    </ParamField>
+
+    ```bash
+    curl -s -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "debug_traceTransaction",
+        "params": [
+          "0x90aa2b46...",
+          {"tracer": "callTracer"}
+        ]
+      }' | jq '.'
+    ```
+
+    Supported tracers:
+
+    | Tracer | Description |
+    |--------|-------------|
+    | `callTracer` | Call hierarchy with inputs, outputs, gas used, and nested calls (default) |
+    | `flatCallTracer` | Flattened list of all calls in Parity style |
+    | `prestateTracer` | Pre-execution state snapshot; set `diffMode: true` for pre/post diff |
+
+    <Note>
+      Forest's `debug_traceTransaction` may include Filecoin ID addresses (e.g. `0xff00...`) alongside EVM addresses due to Filecoin's dual address representation. This is expected behaviour.
+    </Note>
+  </Accordion>
+
+  <Accordion title="trace_call">
+    Executes an EVM call and returns Parity-style execution traces without creating a transaction.
+
+    **Authentication:** none required
+
+    <ParamField body="callObject" type="object" required>
+      The call to simulate: `from`, `to`, `data`, `value`, `gas`, `gasPrice`.
+    </ParamField>
+    <ParamField body="traceTypes" type="array" required>
+      Array of trace types to return: `"trace"`, `"stateDiff"`. (`"vmTrace"` is not supported.)
+    </ParamField>
+    <ParamField body="blockParam" type="string" required>
+      Block number or tag (`"latest"`, `"finalized"`, etc.)
+    </ParamField>
+
+    ```bash
+    curl -s -X POST http://localhost:2345/rpc/v1 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "trace_call",
+        "params": [
+          {
+            "from": "0xYOUR_ACCOUNT",
+            "to": "0x1112da864d5b3a9e23bbdb543699351a694f814d",
+            "data": "0x4018d9aa000000000000000000000000000000000000000000000000000000000000007b"
+          },
+          ["trace", "stateDiff"],
+          "latest"
+        ]
+      }' | jq '.'
+    ```
+
+    State diff uses delta notation: `"="` unchanged, `"+"` added, `"-"` removed, `"*"` changed with `from`/`to` values.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Auth Methods (`Filecoin.Auth*`)
+
+<AccordionGroup>
+  <Accordion title="Filecoin.AuthNew">
+    Creates a new JWT with the specified permissions.
+
+    **Authentication:** `admin` required
+
+    <ParamField body="permissions" type="array" required>
+      Array of permission strings: `["read"]`, `["read","write"]`, `["read","write","sign"]`, or `["read","write","sign","admin"]`.
+    </ParamField>
+    <ParamField body="expiration_secs" type="integer">
+      Token lifetime in seconds. Pass `null` for the default (100 years).
+    </ParamField>
+  </Accordion>
+
+  <Accordion title="Filecoin.AuthVerify">
+    Verifies a JWT and returns the permissions it encodes.
+
+    **Authentication:** `admin` required
+
+    <ParamField body="header_raw" type="string" required>
+      The raw JWT string to verify.
+    </ParamField>
+
+    <ResponseField name="result" type="array">
+      Array of permission strings granted by the token.
+    </ResponseField>
+  </Accordion>
+</AccordionGroup>

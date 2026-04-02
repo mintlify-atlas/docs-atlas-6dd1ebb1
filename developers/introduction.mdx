@@ -1,0 +1,263 @@
+---
+title: Developer Introduction
+description: Getting started as a contributor to the Forest Filecoin node codebase — environment setup, build commands, and key development workflows.
+---
+
+<Warning>
+  This section is intended for **contributors to the Forest codebase**. If you are a user running a Forest node, refer to the user documentation instead.
+</Warning>
+
+Forest is a Rust implementation of a Filecoin node built by ChainSafe. It can transfer FIL, host a high-performance RPC API, validate the Filecoin blockchain, and generate blockchain snapshots. It aims to be faster and easier to use than the canonical Filecoin node (Lotus).
+
+## Quick links
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/developers/architecture">
+    Core modules, startup flow, chain sync, RPC server, and storage layers.
+  </Card>
+  <Card title="RPC API" icon="plug" href="/developers/rpc-api">
+    Lotus compatibility, namespaces, adding methods, and testing.
+  </Card>
+  <Card title="Network Upgrades" icon="arrow-up-circle" href="/developers/network-upgrades">
+    How Forest handles Filecoin network version upgrades and state migrations.
+  </Card>
+  <Card title="Contributing" icon="git-pull-request" href="/developers/contributing">
+    Commit conventions, code style, PR workflow, and where to get help.
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+Before working on Forest you need:
+
+- **Rust** — version pinned in `rust-toolchain.toml`
+- **Go** — version pinned in `go.work` (required for the F3 sidecar)
+- **OS packages** — `build-essential` on Ubuntu; `clang` and `clang-devel` on Fedora
+- **mise-en-place** — task runner and tool installer used for all dev commands (`mise.jdx.dev`)
+- **cargo-nextest** — faster test runner (`cargo install cargo-nextest --locked`)
+
+## Development environment setup
+
+<Steps>
+  <Step title="Clone and enter the repository">
+    ```bash
+    git clone https://github.com/ChainSafe/forest.git
+    cd forest
+    ```
+  </Step>
+  <Step title="Install linting tools">
+    ```bash
+    mise install-lint-tools
+    ```
+  </Step>
+  <Step title="Verify the build">
+    ```bash
+    mise run install
+    ```
+    This installs the Forest binaries using the release profile. Use `mise run install quick` for a faster, less-optimised build during active development.
+  </Step>
+  <Step title="Run the test suite">
+    ```bash
+    mise test
+    ```
+    Confirm everything passes before making changes.
+  </Step>
+</Steps>
+
+## Build commands
+
+<Tabs>
+  <Tab title="Install (recommended)">
+    ```bash
+    # Release profile — optimised, stripped, thin LTO
+    mise run install
+
+    # Quick profile — inherits release, opt-level=1, no LTO (good for iteration)
+    mise run install quick
+
+    # Debug build
+    mise run install dev
+
+    # Maximum optimisation with fat LTO (slow)
+    mise run install release-lto-fat
+
+    # Slim build — minimal features
+    mise run install --slim
+    ```
+  </Tab>
+  <Tab title="Build only">
+    ```bash
+    # Release build without installing
+    cargo build --release
+
+    # Faster compile time
+    cargo build --profile quick
+    ```
+  </Tab>
+</Tabs>
+
+## Cargo aliases
+
+Three convenience aliases are defined for running the binaries during development without installing them:
+
+```bash
+# Run the Forest daemon (equivalent to: cargo run --bin forest --)
+cargo daemon --chain calibnet
+
+# Run the Forest CLI (equivalent to: cargo run --bin forest-cli --)
+cargo cli info show
+
+# Run forest-tool (equivalent to: cargo run --bin forest-tool --release --)
+cargo forest-tool --help
+```
+
+## Testing
+
+<CodeGroup>
+
+```bash Run all tests
+# Uses the quick profile by default
+mise test
+
+# Release profile
+mise test release
+
+# Dev profile
+mise test dev
+```
+
+```bash Run specific tests
+# Rust tests only (no doctests)
+mise test:rust
+
+# Doctests only
+mise test:docs
+
+# Single named test
+cargo nextest run --cargo-profile quick <test_name>
+
+# Tests in a module
+cargo nextest run --cargo-profile quick state_manager::
+
+# Full output for a single test
+cargo nextest run --cargo-profile quick --no-capture <test_name>
+
+# Doctests for private items
+cargo test --doc --profile quick --features doctest-private
+```
+
+</CodeGroup>
+
+## Linting and formatting
+
+<CodeGroup>
+
+```bash Lint
+# Run all linters
+mise lint
+
+# Individual linters
+mise lint:rust-fmt    # Rust formatting check
+mise lint:clippy      # Rust linter
+mise lint:toml        # TOML formatting/linting
+mise lint:spellcheck  # Spell checking
+mise lint:deny        # License and security checks
+mise lint:unused-deps # Unused dependencies
+mise lint:dockerfile  # Dockerfile linting
+mise lint:shellcheck  # Shell script linting
+mise lint:golang      # Go code (F3 sidecar)
+```
+
+```bash Format
+# Format Rust, TOML, Markdown, and YAML
+mise fmt
+
+# Individual formatters
+cargo fmt --all -- --check
+cargo clippy --all-targets --no-deps -- --deny=warnings
+taplo fmt --check && taplo lint
+```
+
+</CodeGroup>
+
+<Tip>
+  Always run `mise lint` and `mise fmt` before opening a PR. The CI pipeline enforces both.
+</Tip>
+
+## Running a local node
+
+<Tabs>
+  <Tab title="Calibnet (testnet)">
+    ```bash
+    # Auto-download the latest snapshot and start syncing
+    forest --chain calibnet --auto-download-snapshot
+    ```
+    Calibnet is the recommended network for development. It is a public testnet that mirrors mainnet behaviour without real FIL.
+  </Tab>
+  <Tab title="Mainnet">
+    ```bash
+    # Requires a snapshot — download one first
+    forest-tool snapshot fetch --chain mainnet
+    forest --import-snapshot <snapshot.car.zst>
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run --init -it --rm \
+      ghcr.io/chainsafe/forest:latest \
+      --chain calibnet --auto-download-snapshot
+    ```
+  </Tab>
+</Tabs>
+
+## Key environment variables
+
+| Variable | Purpose |
+|---|---|
+| `RUST_LOG` | Logging level, e.g. `debug` or `forest=trace` |
+| `FULLNODE_API_INFO` | RPC endpoint and auth token, e.g. `<token>:/ip4/127.0.0.1/tcp/2345/http` |
+| `FOREST_KEYSTORE_PHRASE` | Passphrase for the encrypted keystore in headless mode |
+| `FOREST_CONFIG_PATH` | Override the default config file location |
+| `FOREST_F3_SIDECAR_FFI_BUILD_OPT_OUT` | Disable the F3 sidecar build (required for the `debugging` profile) |
+
+## Build profiles
+
+| Profile | Description |
+|---|---|
+| `dev` | Fast compile, line-table-only debug info, `opt-level=1` for deps |
+| `quick` | Inherits from release, `opt-level=1`, no LTO — good for test loops |
+| `release` | Optimised, stripped, thin LTO, `panic=abort` |
+| `release-lto-fat` | Maximum optimisation with fat LTO |
+| `debugging` | Full debug info — requires `FOREST_F3_SIDECAR_FFI_BUILD_OPT_OUT=1` |
+| `profiling` | For profiling tools |
+
+## Common CLI commands
+
+```bash
+# Authenticate with the running daemon
+export FULLNODE_API_INFO="<token>:/ip4/127.0.0.1/tcp/2345/http"
+
+forest-cli info show           # Node status
+forest-cli chain head          # Current chain head
+forest-cli sync status         # Sync progress
+forest-cli net peers           # Connected peers
+forest-cli wallet list         # List wallets
+forest-cli mpool pending       # Pending messages
+```
+
+## Debugging
+
+```bash
+# Enable debug logging
+RUST_LOG=debug forest --chain calibnet
+
+# Scope logging to a single module
+RUST_LOG="debug,forest_libp2p::service=info" forest
+
+# tokio-console (requires tokio-console feature and RUSTFLAGS="--cfg tokio_unstable")
+tokio-console
+
+# Build with full debug symbols for LLDB/GDB
+FOREST_F3_SIDECAR_FFI_BUILD_OPT_OUT=1 cargo build --profile debugging
+lldb target/debugging/forest
+```

@@ -1,0 +1,219 @@
+---
+title: Snapshots
+description: Fetch, import, export, and work with Filecoin blockchain snapshots in Forest, including ChainSafe's snapshot service and archival lite/diff snapshots.
+---
+
+A snapshot is a compressed export of the Filecoin state tree that lets a new node skip replaying the full chain history and reach a synced state in minutes instead of days.
+
+## ChainSafe snapshot service
+
+ChainSafe publishes free snapshots at [forest-archive.chainsafe.dev](https://forest-archive.chainsafe.dev/list). Snapshots are generated approximately hourly for both mainnet and calibration networks and include the last 2000 tipsets — enough to bootstrap any new node. Each snapshot ships with a checksum for integrity verification.
+
+<Note>
+Snapshots use the `.forest.car.zst` format: `zstd`-compressed CAR files that include a built-in index. Forest can read them directly from disk without importing them into the database. Both Forest and Lotus can import them — no manual decompression is needed.
+</Note>
+
+## Performance comparison with Lotus
+
+Forest produces Lotus-compatible snapshots with significantly lower resource usage:
+
+| Client    | Generation time | Avg. memory | Peak memory |
+|-----------|----------------|-------------|-------------|
+| **Forest** | 28 min        | 11 GiB      | 14 GiB      |
+| **Lotus**  | 93 min        | 122 GiB     | 276 GiB     |
+
+*Benchmarked on AMD EPYC 7F32, 512 GiB RAM, 4 TiB NVMe SSD.*
+
+## Fetching a snapshot
+
+Use `forest-tool` to download the latest snapshot for your network:
+
+<Tabs>
+  <Tab title="Calibnet">
+    ```shell
+    forest-tool snapshot fetch --chain calibnet
+    ```
+  </Tab>
+  <Tab title="Mainnet">
+    ```shell
+    forest-tool snapshot fetch --chain mainnet
+    ```
+  </Tab>
+</Tabs>
+
+The tool downloads the latest snapshot from the ChainSafe service and saves it to the current directory.
+
+## Starting a node with a snapshot
+
+<Tabs>
+  <Tab title="Auto-download (recommended)">
+    Pass `--auto-download-snapshot` and Forest will fetch the latest snapshot automatically on first start:
+
+    ```shell
+    forest --chain calibnet --auto-download-snapshot
+    ```
+
+    This is the fastest way to get started — no manual snapshot management required.
+  </Tab>
+  <Tab title="Specify a local snapshot">
+    If you already have a snapshot file, point Forest to it with `--import-snapshot`:
+
+    ```shell
+    forest --chain calibnet --import-snapshot /path/to/snapshot.forest.car.zst
+    ```
+  </Tab>
+</Tabs>
+
+## Exporting a snapshot
+
+Once your node is fully synced, you can export a fresh snapshot:
+
+<Steps>
+  <Step title="Wait for full sync">
+    ```shell
+    forest-cli sync wait
+    ```
+
+    This blocks until the node reaches the chain head.
+  </Step>
+
+  <Step title="Export the snapshot">
+    ```shell
+    forest-cli snapshot export
+    ```
+
+    The snapshot is written to the current directory, compressed, and includes the 2000 most recent state roots.
+
+    Expected sizes:
+    - **Calibnet**: ~5 GB
+    - **Mainnet**: 70+ GB (grows over time)
+  </Step>
+</Steps>
+
+**Hardware requirements for export:**
+- Mainnet: at least 16 GB RAM; ~30 minutes on fast NVMe
+- Calibnet: at least 8 GB RAM; under 1 minute
+
+## Archival snapshots
+
+For operators who need historical chain data, ChainSafe publishes two types of archival snapshots:
+
+| Type     | Naming pattern                                                      | Frequency              | Contents                                                                                              |
+|----------|---------------------------------------------------------------------|------------------------|-------------------------------------------------------------------------------------------------------|
+| **Lite** | `forest_snapshot_<network>_<date>_height_<EPOCH>.forest.car.zst`   | Every 30,000 epochs (~10 days) | Complete state trees from `EPOCH - 900` to `EPOCH`, plus full block header history back to genesis.  |
+| **Diff** | `forest_diff_<network>_<date>_height_<BASE>+<RANGE>.forest.car.zst` | Every 3,000 epochs (~1 day)   | Only the new IPLD key-value pairs added since the previous diff. Not usable without the base lite snapshot. |
+
+**Download locations:**
+
+<CodeGroup>
+
+```text Mainnet
+https://forest-archive.chainsafe.dev/list/mainnet/lite
+https://forest-archive.chainsafe.dev/list/mainnet/diff
+```
+
+```text Calibnet
+https://forest-archive.chainsafe.dev/list/calibnet/lite
+https://forest-archive.chainsafe.dev/list/calibnet/diff
+```
+
+</CodeGroup>
+
+### How lite and diff snapshots work together
+
+<Warning>
+A diff snapshot is **not usable on its own**. It must be combined with its matching base lite snapshot and all intermediate diffs to form a complete state tree. Missing the base or any intermediate diff causes errors like `failed to lookup actor f410f...` or `failed to read init actor address map`.
+</Warning>
+
+A complete state tree at epoch `E` requires:
+
+1. The **lite snapshot** whose epoch is at or just before `E`
+2. **All consecutive diff snapshots** bridging from that lite epoch up to `E`
+
+Lite snapshots are published every 30,000 epochs; diffs every 3,000 epochs (10 diffs per lite interval).
+
+**Worked example — calibnet epoch 3,506,992:**
+
+| # | Snapshot | Purpose |
+|---|----------|---------|
+| 1 | `forest_snapshot_calibnet_..._height_3480000.forest.car.zst` | Base lite (complete state @3,480,000) |
+| 2 | `forest_diff_calibnet_..._height_3480000+3000.forest.car.zst` | State changes through 3,483,000 |
+| 3 | `forest_diff_calibnet_..._height_3483000+3000.forest.car.zst` | ...through 3,486,000 |
+| 4–10 | *(continue for each 3,000-epoch interval)* | ...through 3,507,000 (covers 3,506,992) |
+
+**Formula for finding the base lite epoch:**
+
+```text
+base_epoch = floor(E / 30,000) × 30,000
+```
+
+### Setting up a partial archival node
+
+<Steps>
+  <Step title="Download the base lite snapshot and all diffs">
+    ```shell
+    # Base lite snapshot (calibnet, starting from epoch 3,480,000)
+    aria2c -x5 https://forest-archive.chainsafe.dev/archive/forest/calibnet/lite/forest_snapshot_calibnet_2026-02-22_height_3480000.forest.car.zst
+
+    # All diff snapshots from 3,480,000 forward
+    aria2c -x5 https://forest-archive.chainsafe.dev/archive/forest/calibnet/diff/forest_diff_calibnet_2026-02-22_height_3480000+3000.forest.car.zst
+    aria2c -x5 https://forest-archive.chainsafe.dev/archive/forest/calibnet/diff/forest_diff_calibnet_2026-02-23_height_3483000+3000.forest.car.zst
+    # ... continue for all diffs up to the present
+    ```
+  </Step>
+
+  <Step title="Initialize the database and add the snapshots">
+    ```shell
+    # Initialize the node (creates the database) and stop
+    forest --chain calibnet --encrypt-keystore=false --halt-after-import
+
+    # Symlink snapshot files into the car_db directory
+    ln -s /path/to/downloaded/snapshots/*.forest.car.zst ~/.local/share/forest/calibnet/car_db/
+    ```
+  </Step>
+
+  <Step title="Start the node and compute states">
+    ```shell
+    forest --chain calibnet --encrypt-keystore=false
+
+    # Compute states from the lite snapshot's head epoch forward
+    forest-cli state compute --epoch 3480000 -n 200
+    ```
+  </Step>
+
+  <Step title="Validate (optional)">
+    ```shell
+    forest-dev state validate --chain calibnet --epoch 3506992
+    ```
+
+    <Info>
+    Validation can look back up to 2000 epochs. If your target epoch is within 2000 epochs of the lite snapshot head, you may need the previous lite snapshot and its diffs as well.
+    </Info>
+  </Step>
+</Steps>
+
+### Merging snapshots into a single file
+
+If you prefer a single file over multiple files in the CAR database:
+
+```shell
+forest-tool archive merge \
+  --output-file merged.forest.car.zst \
+  forest_snapshot_..._height_30000.forest.car.zst \
+  forest_diff_..._height_30000+3000.forest.car.zst \
+  forest_diff_..._height_33000+3000.forest.car.zst
+```
+
+### Common pitfalls
+
+<AccordionGroup>
+  <Accordion title="'failed to lookup actor f410f...' or 'failed to read init actor address map'">
+    The state tree is incomplete. Ensure the correct base lite snapshot and **all** diff snapshots between it and your target epoch are imported before computing state.
+  </Accordion>
+  <Accordion title="'Parent state root did not match computed state'">
+    State was computed from an incomplete tree. Re-import with the correct base lite and all intermediate diffs, then re-run `forest-cli state compute`.
+  </Accordion>
+  <Accordion title="Backfilling after downtime">
+    Download only the missing diff snapshots (and any new lite snapshots if a 30,000-epoch boundary was crossed). Add them to the `car_db` directory and restart Forest — it picks up new data automatically.
+  </Accordion>
+</AccordionGroup>

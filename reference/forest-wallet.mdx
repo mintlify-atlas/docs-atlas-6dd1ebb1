@@ -1,0 +1,299 @@
+---
+title: forest-wallet
+description: CLI reference for forest-wallet, the Filecoin wallet management binary. Covers key generation, balance queries, signing, importing and exporting keys, and sending FIL.
+---
+
+`forest-wallet` manages Filecoin wallets and keys. By default it operates on a local wallet stored on disk. With `--remote-wallet` it delegates operations to the wallet embedded in the running `forest` daemon.
+
+```bash
+forest-wallet [OPTIONS] <COMMAND>
+```
+
+## Global options
+
+| Flag | Description |
+|------|-------------|
+| `--token <TOKEN>` | Admin JWT token for communicating with a Forest node (required for remote wallet) |
+| `--remote-wallet` | Use the remote wallet on the connected Filecoin node |
+| `--encrypt` | Encrypt the local wallet on disk |
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+<Warning>
+When using `--remote-wallet`, the connection between your client and the node is **not** encrypted by this tool. Ensure you use a secure channel (e.g. TLS tunnel or loopback) before using this mode.
+</Warning>
+
+## Local vs remote wallet
+
+| Mode | Description |
+|------|-------------|
+| Local (default) | Keys are stored in an encrypted file on the local filesystem. No running node is required for most operations. |
+| Remote (`--remote-wallet`) | Keys are managed by the remote Forest node's keystore. Requires `--token` with `sign` or `admin` permission. |
+
+## Subcommands
+
+<AccordionGroup>
+
+<Accordion title="new — Create a new wallet">
+
+```bash
+forest-wallet new [SIGNATURE_TYPE]
+```
+
+Creates a new key pair and returns the corresponding Filecoin address.
+
+| Argument | Description |
+|----------|-------------|
+| `[SIGNATURE_TYPE]` | Key type: `secp256k1`, `bls`, or `delegated` (default: `secp256k1`) |
+
+**Examples:**
+
+```bash
+# Create a secp256k1 wallet (default)
+forest-wallet new
+
+# Create a BLS wallet
+forest-wallet new bls
+
+# Create a delegated (f4) wallet
+forest-wallet new delegated
+```
+
+</Accordion>
+
+<Accordion title="balance — Get account balance">
+
+```bash
+forest-wallet balance [OPTIONS] <ADDRESS>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--no-round` | Show full precision instead of rounding to 4 significant figures |
+| `--no-abbrev` | Show whole FIL instead of using SI prefixes (e.g. atto) |
+
+**Examples:**
+
+```bash
+# Get balance with default formatting
+forest-wallet balance f1abc...
+
+# Get full precision balance
+forest-wallet balance --no-round --no-abbrev f1abc...
+```
+
+</Accordion>
+
+<Accordion title="default — Get the default address">
+
+```bash
+forest-wallet default
+```
+
+Prints the default wallet address currently set for the wallet.
+
+**Example:**
+
+```bash
+forest-wallet default
+```
+
+</Accordion>
+
+<Accordion title="export — Export wallet keys">
+
+```bash
+forest-wallet export <ADDRESS>
+```
+
+Exports the private key for the given address as a JSON-encoded keyinfo object. Store this securely — it contains the raw private key.
+
+**Example:**
+
+```bash
+forest-wallet export f1abc... > my-key.json
+```
+
+</Accordion>
+
+<Accordion title="has — Check if a key exists">
+
+```bash
+forest-wallet has <KEY>
+```
+
+Returns whether the wallet contains a key for the given address.
+
+**Example:**
+
+```bash
+forest-wallet has f1abc...
+```
+
+</Accordion>
+
+<Accordion title="import — Import keys into the wallet">
+
+```bash
+forest-wallet import [PATH]
+```
+
+Imports a key from a keyinfo JSON file. If `PATH` is omitted, reads from stdin.
+
+**Examples:**
+
+```bash
+# Import from a file
+forest-wallet import /path/to/my-key.json
+
+# Import from stdin (e.g. piped from export)
+cat my-key.json | forest-wallet import
+```
+
+</Accordion>
+
+<Accordion title="list — List wallet addresses">
+
+```bash
+forest-wallet list [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--no-round` | Do not round balance to 4 significant figures |
+| `--no-abbrev` | Show whole FIL instead of SI prefixes |
+
+**Example:**
+
+```bash
+# List all addresses with full balance precision
+forest-wallet list --no-round --no-abbrev
+```
+
+</Accordion>
+
+<Accordion title="set-default — Set the default address">
+
+```bash
+forest-wallet set-default <KEY>
+```
+
+Sets the given address as the default wallet address.
+
+**Example:**
+
+```bash
+forest-wallet set-default f1abc...
+```
+
+</Accordion>
+
+<Accordion title="sign — Sign a message">
+
+```bash
+forest-wallet sign -m <MESSAGE> -a <ADDRESS>
+```
+
+Signs a hex-encoded message with the private key for the given address.
+
+| Flag | Description |
+|------|-------------|
+| `-m <MESSAGE>` | Hex-encoded message to sign |
+| `-a <ADDRESS>` | Address whose key is used to sign |
+
+**Example:**
+
+```bash
+forest-wallet sign -m 68656c6c6f -a f1abc...
+```
+
+</Accordion>
+
+<Accordion title="validate-address — Validate an address">
+
+```bash
+forest-wallet validate-address <ADDRESS>
+```
+
+Checks whether a string can be decoded as a well-formed Filecoin address. Does not check whether the address exists on-chain.
+
+**Example:**
+
+```bash
+forest-wallet validate-address f1abc...
+```
+
+</Accordion>
+
+<Accordion title="verify — Verify a signature">
+
+```bash
+forest-wallet verify -a <ADDRESS> -m <MESSAGE> -s <SIGNATURE>
+```
+
+Returns `true` if the signature is valid for the given message and address.
+
+| Flag | Description |
+|------|-------------|
+| `-a <ADDRESS>` | Address that signed the message |
+| `-m <MESSAGE>` | The original message |
+| `-s <SIGNATURE>` | The signature to verify |
+
+**Example:**
+
+```bash
+forest-wallet verify -a f1abc... -m 68656c6c6f -s 7b2274797065223a...
+```
+
+</Accordion>
+
+<Accordion title="delete — Delete a wallet">
+
+```bash
+forest-wallet delete <ADDRESS>
+```
+
+Permanently removes the key for the given address from the wallet.
+
+<Warning>
+This action is irreversible. Export the key first if you may need it in the future.
+</Warning>
+
+**Example:**
+
+```bash
+# Export key before deleting
+forest-wallet export f1abc... > backup.json
+forest-wallet delete f1abc...
+```
+
+</Accordion>
+
+<Accordion title="send — Send FIL">
+
+```bash
+forest-wallet send [OPTIONS] <TARGET_ADDRESS> <AMOUNT>
+```
+
+Sends FIL from the default (or specified) address to the target address.
+
+| Flag | Description |
+|------|-------------|
+| `--from <ADDRESS>` | Source address (uses default wallet address if omitted) |
+| `--gas-feecap <VALUE>` | Maximum gas fee cap (default: 0.0) |
+| `--gas-limit <MILLIGAS>` | Gas limit in milliGas (default: 0) |
+| `--gas-premium <VALUE>` | Gas premium (default: 0.0) |
+
+**Examples:**
+
+```bash
+# Send 1 FIL to a target address
+forest-wallet send f1target... 1
+
+# Send from a specific address with custom gas settings
+forest-wallet send --from f1source... --gas-limit 1000000 f1target... 0.5
+```
+
+</Accordion>
+
+</AccordionGroup>

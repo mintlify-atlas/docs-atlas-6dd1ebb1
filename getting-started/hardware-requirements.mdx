@@ -1,0 +1,99 @@
+---
+title: Hardware requirements
+description: Minimum and recommended hardware specifications for running a Forest Filecoin node on mainnet or calibnet.
+---
+
+Forest is designed to run on consumer hardware. The requirements below cover the latest version of Forest on mainnet. Requirements on test networks such as calibnet are significantly lower.
+
+## Operating system
+
+| OS | Support |
+|----|---------|
+| Linux | Fully supported (recommended) |
+| macOS | Fully supported |
+| Windows | Supported via Docker |
+
+## Bootstrap node (stateless)
+
+A stateless bootstrap node serves peers on the network but does not store chain state or require snapshots.
+
+| | Minimum | Recommended | Notes |
+|-|---------|-------------|-------|
+| CPU | 2-core | 4-core | |
+| Memory | 2 GiB | 4 GiB | Stateless nodes don't run state migrations, so no memory spikes |
+| Disk space | 3 GiB | 3 GiB | State is not stored; snapshots are not required |
+
+**Network:** A bootstrap node should have at least 6 Mbps upload and 2 Mbps download bandwidth to properly serve the network.
+
+## Regular node (stateful)
+
+A general-purpose node that participates in the network, validates blocks, and maintains chain state. Memory and CPU requirements scale with expected load. Disk space depends on how much historical state you need to retain.
+
+| | Minimum | Recommended | Notes |
+|-|---------|-------------|-------|
+| CPU | 4-core | 8-core | |
+| Memory | 8 GiB | 16 GiB | State migrations can require additional memory |
+| Disk space | 256 GiB | 256 GiB | NVMe strongly recommended |
+
+<Tip>
+If you disable garbage collection, you can cut disk space requirements in half, but you will need to manage disk usage manually. The chain grows by approximately 5 GiB per day.
+</Tip>
+
+## RPC node
+
+An RPC node exposes the Filecoin JSON-RPC API to clients. Memory and CPU requirements depend heavily on the enabled RPC methods and expected request load. Disk space depends on required historical state retention.
+
+| | Minimum | Recommended | Notes |
+|-|---------|-------------|-------|
+| CPU | 4-core | 8-core | |
+| Memory | 8 GiB | 32 GiB | State migrations can require additional memory |
+| Disk space | 256 GiB | 256 GiB | NVMe strongly recommended |
+
+**Disk space formula:**
+
+As a rule of thumb, an RPC node requires:
+
+```
+200 GiB + (5 GiB × days of retention)
+```
+
+For example, to retain 30 days of historical state:
+
+```
+200 GiB + (5 GiB × 30) = 350 GiB
+```
+
+## Calibnet (testnet)
+
+Requirements on calibnet are significantly lower than mainnet. The calibnet snapshot is a fraction of the size of the mainnet snapshot, and state is less computationally intensive. A Raspberry Pi 5 or equivalent single-board computer is sufficient for a calibnet node.
+
+<Note>
+Calibnet is the recommended network for development and testing. Use it to get familiar with Forest before running a mainnet node.
+</Note>
+
+## Storage recommendations
+
+- **NVMe SSD** — Strongly recommended for stateful and RPC nodes. Random read/write performance is critical during state access and sync.
+- **HDD** — Insufficient for mainnet stateful or RPC nodes due to random I/O requirements.
+- **Network-attached storage** — Not recommended for primary storage; acceptable for snapshot archiving.
+
+## Summary
+
+<CardGroup cols={3}>
+  <Card title="Bootstrap node" icon="network">
+    **CPU:** 2–4 cores  
+    **RAM:** 2–4 GiB  
+    **Disk:** 3 GiB  
+    **Net:** 6 Mbps upload
+  </Card>
+  <Card title="Regular node" icon="server">
+    **CPU:** 4–8 cores  
+    **RAM:** 8–16 GiB  
+    **Disk:** 256 GiB NVMe
+  </Card>
+  <Card title="RPC node" icon="code">
+    **CPU:** 4–8 cores  
+    **RAM:** 8–32 GiB  
+    **Disk:** 256 GiB+ NVMe
+  </Card>
+</CardGroup>

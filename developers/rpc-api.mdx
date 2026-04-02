@@ -1,0 +1,284 @@
+---
+title: RPC API
+description: Forest's JSON-RPC API — Lotus compatibility goals, namespaces, OpenRPC specs, adding methods, and testing strategies.
+---
+
+Forest exposes a JSON-RPC API that aims to be a drop-in replacement for the canonical Lotus node API. This page covers the compatibility approach, the available method namespaces, how to add new methods, and how to test them.
+
+## Lotus compatibility
+
+Forest targets full compatibility with both the Lotus v0 (deprecated) and v1 (stable) API surfaces:
+
+- [Lotus v0 API methods](https://github.com/filecoin-project/lotus/blob/master/documentation/en/api-methods-v0-deprecated.md)
+- [Lotus v1 API methods](https://github.com/filecoin-project/lotus/blob/master/documentation/en/api-methods-v1-stable.md)
+
+Some Lotus-specific methods (such as `Filecoin.ChainHotGC`) are meaningless in Forest's architecture and are implemented as no-ops for client compatibility. Mining-related RPC calls are out of scope and will not be implemented.
+
+<Note>
+  Forest does not support `lotus-gateway` as a testing target. The `forest-tool api compare` command must be run against a directly-accessible node, not through a reverse-proxy gateway.
+</Note>
+
+## Checking compatibility
+
+To generate a compatibility report between a running Forest node and a running Lotus node:
+
+<Steps>
+  <Step title="Start Lotus on Calibnet">
+    Build Lotus with Calibnet support and sync to the network head. Enable Ethereum RPC methods:
+    ```bash
+    LOTUS_FEVM_ENABLEETHRPC=1 lotus daemon --lotus-make-genesis=devgen.car --genesis-template=localnet.json --bootstrap=false
+    ```
+  </Step>
+  <Step title="Start Forest on Calibnet">
+    ```bash
+    forest --chain calibnet --auto-download-snapshot
+    ```
+    Wait for both nodes to reach the same chain head.
+  </Step>
+  <Step title="Run the comparison tool">
+    ```bash
+    forest-tool api compare
+    ```
+    With custom endpoints:
+    ```bash
+    forest-tool api compare \
+      --forest /ip4/127.0.0.1/tcp/2345/http \
+      --lotus /ip4/127.0.0.1/tcp/1234/http
+    ```
+  </Step>
+</Steps>
+
+The output table lists every tested method and its result for both nodes:
+
+| RPC Method | Forest | Lotus |
+|---|---|---|
+| `Filecoin.ChainGetBlock` | Valid | Valid |
+| `Filecoin.ChainGetGenesis` | Valid | Valid |
+| `Filecoin.ChainGetMessage` | `InternalServerError` | Valid |
+| `Filecoin.ChainGetMessagesInTipset` | `MissingMethod` | Valid |
+| `Filecoin.ChainGetTipSetByHeight` | Valid | Valid |
+| `Filecoin.ChainHead` | Valid | Valid |
+| `Filecoin.ChainReadObj` | `InvalidResponse` | Valid |
+| `Filecoin.MpoolPending` | Valid | Valid |
+| `Filecoin.NetAddrsListen` | Valid | Valid |
+| `Filecoin.StateGetActor` | `InternalServerError` | Valid |
+| `Filecoin.StateNetworkName` | Valid | Valid |
+| `Filecoin.Version` | Valid | Valid |
+
+A `MissingMethod` result for Forest indicates the method has not been implemented yet. An `InvalidResponse` indicates the method exists but returns data that does not match Lotus's schema.
+
+<Tip>
+  If a Lotus column entry is not `Valid`, the Forest RPC client itself has a bug in how it communicates with Lotus — not in the server implementation.
+</Tip>
+
+## Inspecting RPC traffic with mitmproxy
+
+For debugging mismatches, run both nodes behind transparent reverse proxies:
+
+```bash
+# Proxy for Forest (port 2345 → 8080)
+mitmproxy --mode reverse:http://localhost:2345 --listen-port 8080
+
+# Proxy for Lotus (port 1234 → 8081)
+mitmproxy --mode reverse:http://localhost:1234 --listen-port 8081
+
+# Run comparison through proxies
+forest-tool api compare \
+  --forest /ip4/127.0.0.1/tcp/8080/http \
+  --lotus /ip4/127.0.0.1/tcp/8081/http
+```
+
+Every request/response pair appears in the mitmproxy terminal for inspection.
+
+## RPC namespaces
+
+<AccordionGroup>
+  <Accordion title="auth:: — Authentication">
+    JWT token generation and permission management.
+
+    - `Filecoin.AuthNew` — generate a new JWT token with specified permissions
+    - `Filecoin.AuthVerify` — verify and decode a JWT token
+  </Accordion>
+  <Accordion title="chain:: — Blockchain data">
+    Read access to blocks, tipsets, and messages stored on chain.
+
+    Key methods: `Filecoin.ChainHead`, `Filecoin.ChainGetBlock`, `Filecoin.ChainGetTipSet`,
+    `Filecoin.ChainGetTipSetByHeight`, `Filecoin.ChainGetMessage`, `Filecoin.ChainGetMessagesInTipset`,
+    `Filecoin.ChainGetEvents`, `Filecoin.ChainNotify`, `Filecoin.ChainGetFinalizedTipset`
+  </Accordion>
+  <Accordion title="state:: — Actor state">
+    Queries against the Filecoin state tree — actor lookups, FVM execution, miner info.
+
+    Key methods: `Filecoin.StateGetActor`, `Filecoin.StateGetID`, `Filecoin.StateReadState`,
+    `Filecoin.StateCompute`, `Filecoin.StateMinerPower`, `Filecoin.StateMinerInfo`,
+    `Filecoin.StateNetworkName`, `Filecoin.StateNetworkVersion`, `Filecoin.StateDecodeParams`
+  </Accordion>
+  <Accordion title="mpool:: — Message pool">
+    Pending transaction management.
+
+    Key methods: `Filecoin.MpoolPending`, `Filecoin.MpoolPush`, `Filecoin.MpoolSelect`,
+    `Filecoin.MpoolGetNonce`
+  </Accordion>
+  <Accordion title="eth:: — Ethereum compatibility">
+    Standard Ethereum JSON-RPC methods for EVM tooling interoperability. See [Ethereum compatibility](#ethereum-rpc-compatibility) below.
+  </Accordion>
+  <Accordion title="net:: — Networking">
+    P2P peer management and network status.
+
+    Key methods: `Filecoin.NetPeers`, `Filecoin.NetAddrsListen`, `Filecoin.NetInfo`,
+    `Filecoin.NetConnect`, `Filecoin.NetDisconnect`, `Filecoin.NetListening`,
+    `Filecoin.NetVersion`, `Filecoin.NetProtectList`
+  </Accordion>
+  <Accordion title="sync:: — Sync status">
+    Chain synchronization progress.
+
+    Key methods: `Forest.SyncStatus`, `Forest.SyncSnapshotProgress`
+  </Accordion>
+  <Accordion title="wallet:: — Key management">
+    Wallet creation, listing, signing, and fund management.
+
+    Key methods: `Filecoin.WalletNew`, `Filecoin.WalletList`, `Filecoin.WalletBalance`,
+    `Filecoin.WalletSign`, `Filecoin.WalletVerify`, `Filecoin.WalletExport`,
+    `Filecoin.WalletImport`, `Filecoin.WalletDefaultAddress`
+  </Accordion>
+</AccordionGroup>
+
+## OpenRPC specifications
+
+Forest generates OpenRPC specifications for all supported methods. The specs are stored in `docs/openrpc-specs/` and can be regenerated with:
+
+```bash
+forest-tool shed openrpc
+```
+
+The `--omit-fields` option allows stripping fields from the generated spec for documentation purposes.
+
+## Adding a new RPC method
+
+<Steps>
+  <Step title="Register the method name and access level">
+    Add the method name constant in `src/rpc_api/mod.rs` and set its required permission level (`read`, `write`, `sign`, or `admin`).
+  </Step>
+  <Step title="Define request and response types">
+    Add any new data types to `src/rpc_api/data_types.rs`. Derive `serde::Serialize`, `serde::Deserialize`, and `schemars::JsonSchema` so the type appears correctly in the OpenRPC spec.
+  </Step>
+  <Step title="Add an RpcRequest in the client">
+    Create an `RpcRequest` struct in the appropriate file under `src/rpc_client/`. This is used by the `forest-tool api compare` test harness.
+  </Step>
+  <Step title="Add a compatibility test">
+    Register the method in `src/tool/subcommands/api_cmd.rs`. At this point it should appear as `Valid` for Lotus and `MissingMethod` for Forest in the comparison table.
+  </Step>
+  <Step title="Implement the handler">
+    Write the server-side implementation in `src/rpc/` and register it in `src/rpc/mod.rs`.
+  </Step>
+  <Step title="Verify the test passes">
+    Re-run `forest-tool api compare`. The method should now show `Valid` for Forest.
+  </Step>
+</Steps>
+
+## Ethereum RPC compatibility
+
+Forest provides a standard Ethereum JSON-RPC surface, enabling use of standard Ethereum tooling (MetaMask, Foundry, ethers.js, etc.) with Filecoin.
+
+### Supported transaction types
+
+- Legacy (pre-EIP-155)
+- EIP-155 (replay protection)
+- EIP-1559 (fee market)
+
+### Key eth_ methods
+
+<Tabs>
+  <Tab title="Block and transaction queries">
+    ```
+    eth_blockNumber
+    eth_getBlockByHash
+    eth_getBlockByNumber
+    eth_getBlockTransactionCountByHash
+    eth_getBlockTransactionCountByNumber
+    eth_getBlockReceipts
+    eth_getTransactionByHash
+    eth_getTransactionByBlockHashAndIndex
+    eth_getTransactionByBlockNumberAndIndex
+    eth_getTransactionReceipt
+    eth_getTransactionCount
+    ```
+  </Tab>
+  <Tab title="State and execution">
+    ```
+    eth_call
+    eth_estimateGas
+    eth_gasPrice
+    eth_feeHistory
+    eth_chainId
+    eth_protocolVersion
+    eth_getBalance
+    eth_getCode
+    eth_getStorageAt
+    eth_syncing
+    eth_accounts
+    ```
+  </Tab>
+  <Tab title="Logs and filters">
+    ```
+    eth_getLogs
+    eth_newFilter
+    eth_newBlockFilter
+    eth_newPendingTransactionFilter
+    eth_getFilterChanges
+    eth_getFilterLogs
+    eth_uninstallFilter
+    ```
+  </Tab>
+  <Tab title="Subscriptions and sending">
+    ```
+    eth_subscribe       (newHeads, logs)
+    eth_unsubscribe
+    eth_sendRawTransaction
+    eth_sendRawTransactionUntrusted
+    ```
+  </Tab>
+</Tabs>
+
+### Address mapping
+
+EVM 20-byte addresses map bijectively to Filecoin f4 (delegated) addresses. Two utility methods support cross-space resolution:
+
+- `Filecoin.EthAddressToFilecoinAddress` — convert an EVM address to a Filecoin address
+- `Filecoin.FilecoinAddressToEthAddress` — convert a Filecoin address to an EVM address
+
+### Trace methods
+
+Forest implements the trace API used by block explorers:
+
+```
+eth_traceBlock
+eth_traceTransaction
+eth_traceFilter
+eth_traceReplayBlockTransactions
+Forest.TraceCall
+```
+
+## Testing RPC methods
+
+### Compatibility tests (stateful)
+
+Run against two live, synced nodes using `forest-tool api compare`. Use `--dump-dir` to save request/response pairs for offline inspection, and `--report-dir` with `--report-mode` for structured test reports.
+
+### Snapshot-based tests
+
+For deterministic, offline testing of RPC responses:
+
+```bash
+# Generate a test snapshot against a live node
+forest-tool api generate-test-snapshot
+
+# Run the snapshot-based test suite
+cargo nextest run --cargo-profile quick rpc::
+```
+
+Snapshot tests record the exact request/response pair from a real node and replay it in CI without requiring a live node.
+
+<Warning>
+  Some Ethereum RPC methods require an active chain index (`chain_indexer` enabled in config). Snapshot tests for those methods must be generated against a node with the indexer running.
+</Warning>

@@ -1,0 +1,215 @@
+---
+title: Monitoring
+description: Monitor your Forest node with Prometheus metrics, health check endpoints, structured logs, and Grafana Loki integration.
+---
+
+Forest exposes three complementary monitoring surfaces: Prometheus metrics for time-series data, HTTP health check endpoints for liveness and readiness probes, and structured logs with optional Loki forwarding.
+
+## Prometheus metrics
+
+Metrics are exposed on `localhost:6116/metrics` by default and are enabled out of the box.
+
+```shell
+curl localhost:6116/metrics
+```
+
+Sample output:
+
+```console
+# HELP lru_cache_miss Stats of lru cache miss.
+# TYPE lru_cache_miss counter
+lru_cache_miss_total{kind="tipset"} 7199
+lru_cache_miss_total{kind="sm_tipset"} 181
+# HELP lru_cache_hit Stats of lru cache hit.
+# TYPE lru_cache_hit counter
+lru_cache_hit_total{kind="sm_tipset"} 913
+lru_cache_hit_total{kind="tipset"} 971846
+```
+
+### Available metric categories
+
+- **Networking** — peer count, blocks received, gossip message rates
+- **Database** — database size, read/write latencies
+- **RPC** — request counts, response times per method
+- **Internal** — LRU cache hit/miss rates, task counts, sync status
+
+### Configuration flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--no-metrics` | — | Disable the metrics endpoint entirely |
+| `--metrics-address <addr>` | `localhost:6116` | Change the bind address and port |
+
+### Monitored-stack Docker Compose setup
+
+The Forest repository includes a ready-to-use monitoring stack at [`monitored-stack/`](https://github.com/ChainSafe/forest/tree/main/monitored-stack). It wires up Forest, Prometheus, and Grafana with a single `docker compose up`, and is a good starting point for local or production setups.
+
+<Tip>
+Some metrics have high cardinality. With a long retention period or high scrape frequency, storage requirements can grow quickly. Tune Prometheus retention and scrape intervals to match your operational needs.
+</Tip>
+
+<Info>
+If you need metrics that Forest does not currently expose, contact the Forest team. Custom metrics can often be added quickly.
+</Info>
+
+## Health check endpoints
+
+All health check endpoints listen on port `2346` by default. Change this with `--healthcheck-address`.
+
+Each endpoint:
+- Returns `200 OK` when the condition is satisfied
+- Returns `503 Service Unavailable` when it is not
+- Accepts an optional `?verbose` query parameter for human-readable output
+
+<Tabs>
+  <Tab title="/livez">
+    **Liveness** — indicates whether the node process is alive and minimally functional. If this fails for a prolonged period, the process should be restarted.
+
+    Checks:
+    - The node is not in an error/boot-loop state
+    - At least one peer is connected (an isolated node cannot sync)
+
+    ```shell
+    curl "http://127.0.0.1:2346/livez?verbose"
+    ```
+
+    Healthy response:
+
+    ```console
+    [+] sync ok
+    [+] peers connected
+    ```
+
+    Unhealthy response:
+
+    ```console
+    [+] sync ok
+    [!] no peers connected
+    ```
+  </Tab>
+
+  <Tab title="/readyz">
+    **Readiness** — indicates whether the node is ready to serve RPC traffic. Use this to gate load balancer registration.
+
+    Checks:
+    - Node is in sync with the network
+    - Current epoch is not too far behind the network head
+    - RPC server is running
+    - Ethereum mappings are up to date (if chain indexer is enabled)
+
+    ```shell
+    curl "127.0.0.1:2346/readyz?verbose"
+    ```
+
+    Ready response:
+
+    ```console
+    [+] sync complete
+    [+] epoch up to date
+    [+] rpc server running
+    [+] f3 running
+    ```
+
+    Not ready response:
+
+    ```console
+    [!] sync incomplete
+    [!] epoch outdated
+    [+] rpc server running
+    [+] f3 running
+    ```
+  </Tab>
+
+  <Tab title="/healthz">
+    **Combined health** — a union of liveness and readiness checks, except that the node does not need to be fully synced. Retained for legacy compatibility (deprecated in Kubernetes in favor of separate `/livez` and `/readyz` probes).
+
+    ```shell
+    curl "http://127.0.0.1:2346/healthz?verbose"
+    ```
+
+    Healthy response:
+
+    ```console
+    [+] epoch up to date
+    [+] rpc server running
+    [+] sync ok
+    [+] peers connected
+    [+] f3 running
+    ```
+
+    Unhealthy response:
+
+    ```console
+    [!] epoch outdated
+    [+] rpc server running
+    [+] sync ok
+    [+] peers connected
+    [+] f3 running
+    ```
+  </Tab>
+</Tabs>
+
+## Logs
+
+Logs are written to standard output by default.
+
+### Log levels with RUST_LOG
+
+Set the `RUST_LOG` environment variable to control verbosity. Different modules can use different levels:
+
+```shell
+RUST_LOG=info,forest_filecoin=debug forest --chain calibnet
+```
+
+Sample output:
+
+```console
+2024-08-28T12:49:59.830012Z  INFO forest::daemon::main: Using default calibnet config
+2024-08-28T12:49:59.834109Z  INFO forest::daemon: Starting Forest daemon, version 0.19.2+git.74fd562acce
+2024-08-28T12:49:59.834123Z DEBUG forest::daemon: Increased file descriptor limit from 1024 to 8192
+2024-08-28T12:49:59.834164Z DEBUG forest::libp2p::keypair: Recovered libp2p keypair from ...
+```
+
+Valid levels: `trace`, `debug`, `info`, `warn`, `error`, `off`.
+
+<Warning>
+`trace` and `debug` logging can generate gigabytes of output per minute. Use fine-grained module filters (e.g., `RUST_LOG=info,forest_filecoin::rpc=debug`) rather than enabling debug globally.
+</Warning>
+
+### Log rotation
+
+Write logs to rotating files instead of stdout with `--log-dir`:
+
+```shell
+forest --chain calibnet --log-dir /var/log/forest
+```
+
+### Sending logs to Grafana Loki
+
+Pass `--loki` to forward logs to a Loki instance via the HTTP push API:
+
+```shell
+forest --chain calibnet --loki --loki-endpoint http://localhost:3100
+```
+
+The default endpoint is `http://localhost:3100`. Override it with `--loki-endpoint` as shown above.
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Node-level monitoring">
+    - **Monitor disk space** — the database can grow rapidly, especially around network upgrades.
+    - **Monitor memory usage** — Forest uses significant RAM during sync. Leave headroom and alert before the limit is reached.
+    - **Monitor chain sync status** — a healthy node syncs approximately two epochs per minute on average.
+    - **Monitor peer count** — a node with zero peers cannot sync. Alert immediately on peer count dropping to zero.
+    - **Review logs for warnings and errors** — they often surface issues before they become critical.
+  </Accordion>
+
+  <Accordion title="Monitoring infrastructure">
+    - **Monitor the monitoring system itself** — if Prometheus or Grafana go down, you lose visibility into the node.
+    - **Set up alerts for critical metrics** — disk space, memory, sync lag, peer count.
+    - **Ensure persistence of monitoring data** — without historical data, diagnosing past incidents is impossible.
+    - **Do not expose monitoring endpoints to the internet** — `/metrics`, `/livez`, and `/readyz` are unauthenticated. Bind them to localhost or a private network.
+    - **Do not set log levels too high in production** — high verbosity slows the node and fills disks.
+  </Accordion>
+</AccordionGroup>

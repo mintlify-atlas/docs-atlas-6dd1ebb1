@@ -1,0 +1,267 @@
+---
+title: "RPC Authentication"
+description: "Forest uses JWT tokens to authorise RPC calls. Learn about permission levels, how to obtain and pass tokens, and how to create scoped tokens for specific operations."
+---
+
+## Overview
+
+Forest uses **JSON Web Tokens (JWTs)** to control access to RPC methods, following the same security model as Lotus. Many read-only methods are publicly accessible without a token; methods that modify state, sign data, or administer the node require a JWT with the appropriate permission level.
+
+<Info>
+Token expiration is set to 100 years by default, so you do not need to handle token rotation under normal circumstances.
+</Info>
+
+---
+
+## Permission Levels
+
+Forest defines four permission scopes, each a superset of the previous:
+
+| Level | Includes | Example methods |
+|-------|----------|-----------------|
+| `read` | — | `Filecoin.ChainHead`, `Filecoin.EthGasPrice`, all read-only queries |
+| `write` | `read` | `Filecoin.NetConnect`, `Filecoin.MpoolPush` |
+| `sign` | `read` + `write` | `Filecoin.WalletSign`, `Filecoin.WalletSignMessage` |
+| `admin` | `read` + `write` + `sign` | `Filecoin.Shutdown`, `Filecoin.AuthNew`, all methods |
+
+<Warning>
+Guard the `admin` token carefully. Anyone with access to it can shut down the node, create new tokens with any permission level, and perform any operation the node supports. Never expose it over an untrusted network.
+</Warning>
+
+---
+
+## Obtaining the Admin Token
+
+### From daemon startup logs
+
+When the Forest daemon starts, it prints the admin token once to stdout. Save it immediately — if you lose it you must restart the node to regenerate it:
+
+```bash
+forest --chain calibnet --encrypt-keystore=false
+```
+
+Example output:
+
+```console
+2024-08-21T11:26:37.611185Z  INFO forest::daemon: Admin token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBbGxvdyI6WyJyZWFkIiwid3JpdGUiLCJzaWduIiwiYWRtaW4iXSwiZXhwIjo0ODc3ODM5NTk3fQ.lnlboKjZhidbH177hWAD8m61MGwCu6w9AYCWaUZoepM
+```
+
+### Save the token to a file
+
+Use `--save-token <PATH>` to write the admin token to a file during startup. Combine with `--exit-after-init` to extract the token without leaving the daemon running:
+
+```bash
+forest --chain calibnet \
+  --encrypt-keystore=false \
+  --save-token /tmp/forest-admin-token \
+  --exit-after-init 2>/dev/null
+
+cat /tmp/forest-admin-token
+```
+
+Example output:
+
+```console
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBbGxvdyI6WyJyZWFkIiwid3JpdGUiLCJzaWduIiwiYWRtaW4iXSwiZXhwIjo0ODc3ODM5NzM5fQ.Ra0u-js9GA0d7hHtJZ-7U4MGOMol5gkMveVeIQtgggw
+```
+
+---
+
+## Passing Tokens to Requests
+
+<Tabs>
+  <Tab title="HTTP header (curl)">
+    Pass the token as a `Bearer` token in the `Authorization` header. The `Bearer` prefix is optional in Forest but required in Lotus, so including it ensures compatibility with both.
+
+    ```bash
+    curl --silent -X POST \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $(cat /tmp/forest-admin-token)" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"Filecoin.Shutdown","params":[]}' \
+      http://127.0.0.1:2345/rpc/v1
+    ```
+
+    Expected response:
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":null}
+    ```
+  </Tab>
+  <Tab title="forest-cli --token flag">
+    Pass the token directly to `forest-cli` with the `--token` flag:
+
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) shutdown
+    ```
+
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) auth create-token --perm read
+    ```
+  </Tab>
+  <Tab title="FULLNODE_API_INFO env var">
+    Set `FULLNODE_API_INFO` to combine the token with a multiaddr. `forest-cli` reads this automatically:
+
+    ```bash
+    export FULLNODE_API_INFO="$(cat /tmp/forest-admin-token):/ip4/127.0.0.1/tcp/2345/http"
+    forest-cli chain head
+    forest-cli net peers
+    ```
+
+    Format: `<TOKEN>:/ip4/<host>/tcp/<port>/http`
+
+    For WebSocket, replace `/http` with `/ws`:
+
+    ```bash
+    export FULLNODE_API_INFO="$(cat /tmp/forest-admin-token):/ip4/127.0.0.1/tcp/2345/ws"
+    ```
+
+    <Note>
+    When `forest-cli` is invoked on the same host as the daemon, the token is set automatically — you do not need to specify it.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## Creating Scoped Tokens
+
+Use `forest-cli auth create-token` to issue tokens with limited permissions. This is the recommended approach for giving external clients access to the node without exposing admin capabilities.
+
+<Steps>
+  <Step title="Create a read-only token">
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) auth create-token --perm read
+    ```
+
+    Output:
+
+    ```console
+    eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJBbGxvdyI6WyJyZWFkIl0sImV4cCI6...
+    ```
+  </Step>
+  <Step title="Create a write token">
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) auth create-token --perm write
+    ```
+  </Step>
+  <Step title="Create a sign token">
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) auth create-token --perm sign
+    ```
+  </Step>
+  <Step title="Create an admin token">
+    ```bash
+    forest-cli --token $(cat /tmp/forest-admin-token) auth create-token --perm admin
+    ```
+  </Step>
+</Steps>
+
+You can also create tokens via the JSON-RPC API directly. `Filecoin.AuthNew` accepts an array of permission strings and an optional expiration in seconds:
+
+```bash
+curl -X POST http://localhost:2345/rpc/v1 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(cat /tmp/forest-admin-token)" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "Filecoin.AuthNew",
+    "params": [["read", "write"], null]
+  }'
+```
+
+Response (base64-encoded token):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+}
+```
+
+---
+
+## Getting API Connection Info
+
+`forest-cli auth api-info` prints the `FULLNODE_API_INFO` string ready for export, including the token for the requested permission level:
+
+```bash
+forest-cli auth api-info --perm admin
+```
+
+Output:
+
+```console
+FULLNODE_API_INFO=eyJ0eXAi...:/ip4/127.0.0.1/tcp/2345/http
+```
+
+```bash
+forest-cli auth api-info --perm read
+```
+
+---
+
+## Verifying a Token
+
+Verify an existing token and inspect its embedded permissions with `Filecoin.AuthVerify`:
+
+```bash
+curl -X POST http://localhost:2345/rpc/v1 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(cat /tmp/forest-admin-token)" \
+  -d "{
+    \"jsonrpc\": \"2.0\",
+    \"id\": 1,
+    \"method\": \"Filecoin.AuthVerify\",
+    \"params\": [\"$(cat /tmp/forest-admin-token)\"]
+  }"
+```
+
+Response (array of granted permissions):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": ["read", "write", "sign", "admin"]
+}
+```
+
+---
+
+## JWT Expiration Validation
+
+By default, Forest validates the expiration (`exp`) claim of every JWT. The default token lifetime is 100 years, so this is rarely an issue in practice.
+
+In environments where tokens are shared across systems (for example, load balancing with Lotus nodes), you can disable expiration validation with the `FOREST_JWT_DISABLE_EXP_VALIDATION` environment variable:
+
+```bash
+FOREST_JWT_DISABLE_EXP_VALIDATION=1 forest --chain calibnet
+```
+
+<Warning>
+Disabling expiration validation allows expired tokens to be accepted indefinitely. This significantly weakens security. Only use this in tightly controlled environments and never in production deployments exposed to the internet.
+</Warning>
+
+---
+
+## Keystore Security
+
+The JWT private key is stored in the node's keystore:
+
+| Keystore type | Location (Linux) |
+|---------------|-----------------|
+| Encrypted (default) | `$HOME/.local/share/forest/keystore` |
+| Plaintext | `$HOME/.local/share/forest/keystore.json` |
+
+Encryption requires the `FOREST_KEYSTORE_PHRASE` environment variable to be set for headless (non-interactive) operation:
+
+```bash
+export FOREST_KEYSTORE_PHRASE="my-secure-passphrase"
+forest --chain calibnet
+```
+
+<Warning>
+Do not disable keystore encryption in production. Plaintext keystores expose your JWT private key and any wallet private keys to anyone with filesystem access.
+</Warning>

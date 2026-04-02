@@ -1,0 +1,268 @@
+---
+title: Wallet management
+description: Create, manage, and use Filecoin wallets with forest-wallet, including sending FIL, importing and exporting keys, and connecting to MetaMask.
+---
+
+Forest ships with `forest-wallet`, a standalone CLI tool for managing Filecoin keys and signing transactions. It can operate against a local keystore (recommended) or delegate to a running Forest or Lotus node via `--remote-wallet`.
+
+<Note>
+`forest-wallet` detects the network (mainnet vs. calibnet) automatically based on the connected node. No extra configuration is required.
+</Note>
+
+## Wallet types
+
+Forest provides two wallet modes:
+
+- **Local wallet** — Keys are stored in `~/.local/share/forest-wallet/keystore.json` and are only accessible to you. Recommended for day-to-day use.
+- **Node wallet** — Keys are managed by the running Forest node for backward compatibility with Lotus. Less secure because the node process has direct access to the keystore.
+
+The examples in this guide use the local wallet mode.
+
+## Connecting to a node
+
+Most wallet operations (checking balances, sending FIL) require access to a Filecoin node. You can run your own or point at a public endpoint:
+
+```shell
+export FULLNODE_API_INFO=/dns/api.calibration.node.glif.io/tcp/443/https
+```
+
+<Warning>
+Only send mainnet FIL through a node you control or deeply trust. The examples below use calibnet testnet tokens.
+</Warning>
+
+## Creating a wallet
+
+<Steps>
+  <Step title="Check the current wallet state">
+    Before creating an address, list existing entries (the output will be empty on a fresh install):
+
+    ```shell
+    forest-wallet list
+    ```
+
+    ```console
+    Address                                   Default Balance
+    ```
+  </Step>
+
+  <Step title="Create a new address">
+    <Tabs>
+      <Tab title="secp256k1 (default)">
+        ```shell
+        forest-wallet new
+        ```
+
+        The default key type is `secp256k1`, which is compatible with most tooling.
+      </Tab>
+      <Tab title="BLS">
+        ```shell
+        forest-wallet new bls
+        ```
+
+        BLS keys produce shorter, aggregatable signatures and are preferred for miner actors.
+      </Tab>
+      <Tab title="Delegated (f4 / EVM-compatible)">
+        ```shell
+        forest-wallet new delegated
+        ```
+
+        `delegated` (f4) addresses are Ethereum-compatible and required for MetaMask import.
+      </Tab>
+    </Tabs>
+
+    Sample output:
+
+    ```console
+    t1amfhh3hxvsilyhloxwheuxforst5hyzsbletgoy
+    ```
+
+    <Note>
+    Testnet addresses start with `t`; mainnet addresses start with `f`. You can read more about [Filecoin address types](https://docs.filecoin.io/smart-contracts/filecoin-evm-runtime/address-types).
+    </Note>
+  </Step>
+
+  <Step title="Verify the new address appears">
+    ```shell
+    forest-wallet list
+    ```
+
+    ```console
+    Address                                   Default Balance
+    t1amfhh3hxvsilyhloxwheuxforst5hyzsbletgoy  X        0 FIL
+    ```
+
+    The `X` column marks the default address.
+  </Step>
+</Steps>
+
+## Checking balances
+
+```shell
+forest-wallet list
+```
+
+```console
+Address                                   Default Balance
+t1qj55ggurqydu4mgoon7ycvkyyhofc4tvf25tmlq           0 FIL
+t1amfhh3hxvsilyhloxwheuxforst5hyzsbletgoy  X        100 FIL
+```
+
+For calibnet testing, request tokens from the [ChainSafe faucet](https://faucet.calibnet.chainsafe-fil.io/funds.html) or the [Beryx faucet](https://beryx.io/faucet). Funds typically arrive within one minute.
+
+<Tip>
+When a faucet or send operation completes, the transaction CID is printed. Use any [Filecoin block explorer](https://docs.filecoin.io/networks/calibration/explorers) to track it.
+</Tip>
+
+## Setting the default address
+
+The default address is used automatically when no sender is specified:
+
+```shell
+forest-wallet set-default <address>
+```
+
+## Sending FIL
+
+```shell
+forest-wallet send <recipient-address> "1.2 FIL"
+```
+
+Sample output (the message CID):
+
+```console
+bafy2bzaceblzz644szs6s5ggyxlgdnonlq5bidu54cxwujcdtgdaze2bafdle
+```
+
+Gas fees are deducted automatically from the sending account. After about one minute, the balances update:
+
+```console
+Address                                   Default Balance
+t1qj55ggurqydu4mgoon7ycvkyyhofc4tvf25tmlq           1200 milliFIL
+t1amfhh3hxvsilyhloxwheuxforst5hyzsbletgoy  X        ~98800 milliFIL
+```
+
+## Importing and exporting keys
+
+<Tabs>
+  <Tab title="Export a key">
+    ```shell
+    forest-wallet export <address>
+    ```
+
+    The output is a hex-encoded key file. Store it somewhere secure.
+  </Tab>
+  <Tab title="Import a key">
+    ```shell
+    forest-wallet import <path-to-key-file>
+    ```
+
+    If the key was exported from a Lotus node, `forest-wallet` can read the same format.
+  </Tab>
+</Tabs>
+
+### Using the node wallet (Lotus compatibility)
+
+To use the wallet built into a running Forest or Lotus node instead of the local keystore:
+
+```shell
+forest-wallet --remote-wallet list
+forest-wallet --remote-wallet send <address> "1 FIL"
+```
+
+This requires write access to the remote node's API.
+
+## Signing and verifying messages
+
+<CodeGroup>
+
+```shell Sign a message
+forest-wallet sign --address <address> --message <hex-encoded-message>
+```
+
+```shell Verify a signature
+forest-wallet verify --address <address> --message <hex-encoded-message> --signature <signature>
+```
+
+</CodeGroup>
+
+## Exporting to MetaMask
+
+Only `f4` (delegated) addresses can be imported into MetaMask, since they share the Ethereum key format.
+
+<Steps>
+  <Step title="Identify your f4 address">
+    ```shell
+    forest-wallet list
+    ```
+
+    Look for an address starting with `t4` (calibnet) or `f4` (mainnet).
+  </Step>
+
+  <Step title="Export the private key in MetaMask format">
+    ```shell
+    forest-wallet export f4... | xxd -r -p | jq -r '.PrivateKey' | base64 -d | xxd -p -c 32
+    ```
+
+    Replace `f4...` with your actual address. The output is a 32-byte hex string ready to paste into MetaMask.
+
+    <Warning>
+    Never share your private key. Anyone with this value has full control over the corresponding funds. Clear your terminal history after running this command.
+    </Warning>
+  </Step>
+
+  <Step title="Add the Filecoin network to MetaMask">
+    <Tabs>
+      <Tab title="Mainnet">
+        Visit [Chainlist — Filecoin Mainnet](https://chainlist.org/chain/314) and click **Connect Wallet** to add the network automatically.
+      </Tab>
+      <Tab title="Calibnet">
+        Visit [Chainlist — Filecoin Calibration Network](https://chainlist.org/chain/314159) and click **Connect Wallet**.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Import the account into MetaMask">
+    1. Open MetaMask.
+    2. Click the account icon → **Add wallet** → **Import an account**.
+    3. Paste the hex private key from step 2.
+    4. Click **Import**.
+  </Step>
+
+  <Step title="Verify the import">
+    Switch to the Filecoin network you added. MetaMask displays the address in Ethereum format (`0x...`). To confirm it matches your `f4` address, use the [Beryx address converter](https://beryx.io/address_converter) or search for the `f4` address on [Blockscout](https://filecoin.blockscout.com/).
+  </Step>
+</Steps>
+
+<Tip>
+Calibnet and mainnet wallets share the same underlying private key. You can export a calibnet wallet and use it on mainnet in MetaMask by simply switching networks. The only difference is the address prefix (`t` vs. `f`).
+</Tip>
+
+## Security recommendations
+
+<AccordionGroup>
+  <Accordion title="Set strict file permissions">
+    The keystore file should only be readable by your user. This is set automatically on creation, but verify it has not been changed:
+
+    ```shell
+    chmod 600 ~/.local/share/forest-wallet/keystore.json
+    ```
+  </Accordion>
+
+  <Accordion title="Encrypt the keystore">
+    Pass `--encrypt` to require a password on every wallet access:
+
+    ```shell
+    forest-wallet --encrypt new
+    ```
+
+    You will be prompted for the password on each subsequent operation. For headless environments, set `FOREST_KEYSTORE_PHRASE` instead.
+  </Accordion>
+
+  <Accordion title="Create regular backups">
+    Use `forest-tool backup` to back up the keystore. If your system is compromised or the disk fails, backups are the only way to recover funds.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Never share your wallet file or private key with anyone. No legitimate service will ask for it. Your private key gives unconditional access to your funds.
+</Warning>

@@ -1,0 +1,332 @@
+---
+title: Environment Variables
+description: Complete reference for all environment variables that control Forest node behavior, organized by category.
+---
+
+Besides CLI flags and the TOML configuration file, Forest exposes a broad set of environment variables. They can be used to configure headless deployments, tune performance, override network parameters, and enable experimental features.
+
+## Core / Keystore
+
+<ParamField path="FOREST_KEYSTORE_PHRASE" type="string" default="(empty)">
+  Passphrase for the encrypted keystore. Required when running Forest in headless (non-interactive) mode with keystore encryption enabled.
+
+  ```bash
+  FOREST_KEYSTORE_PHRASE="my-secure-passphrase" forest --chain calibnet
+  ```
+</ParamField>
+
+<ParamField path="FOREST_CONFIG_PATH" type="file path" default="$FOREST_HOME/com.ChainSafe.Forest/config.toml">
+  Path to the Forest TOML configuration file. Overridden by the `--config` CLI flag if both are provided.
+
+  ```bash
+  FOREST_CONFIG_PATH=/etc/forest/config.toml forest
+  ```
+</ParamField>
+
+---
+
+## RPC
+
+<ParamField path="FOREST_RPC_DEFAULT_TIMEOUT" type="duration (seconds)" default="60">
+  Default timeout for RPC calls, in seconds.
+</ParamField>
+
+<ParamField path="FOREST_RPC_MAX_CONNECTIONS" type="positive integer" default="1000">
+  Maximum number of simultaneous connections the RPC server will accept.
+</ParamField>
+
+<ParamField path="FOREST_STRICT_JSON" type="1 or true" default="false">
+  Enable strict JSON validation to detect duplicate keys in RPC requests. Useful for debugging malformed clients.
+</ParamField>
+
+---
+
+## Networking / P2P
+
+<ParamField path="FOREST_MAX_CONCURRENT_REQUEST_RESPONSE_STREAMS_PER_PEER" type="positive integer" default="10">
+  Maximum number of concurrent streams per peer for request-response-based P2P protocols.
+</ParamField>
+
+<ParamField path="FOREST_BLOCK_DELAY_SECS" type="positive integer" default="network-dependent">
+  Duration of each tipset epoch in seconds. Defaults to the value defined by the selected network (e.g., 30s for mainnet).
+</ParamField>
+
+<ParamField path="FOREST_PROPAGATION_DELAY_SECS" type="positive integer" default="network-dependent">
+  How long to wait for a block to propagate through the network before acting on it.
+</ParamField>
+
+<ParamField path="FULLNODE_API_INFO" type="string">
+  RPC endpoint and authentication token for `forest-cli`. Format: `<TOKEN>:/ip4/<host>/tcp/<port>/http`. If no token is needed, omit the token and the colon.
+
+  ```bash
+  export FULLNODE_API_INFO="eyJ0eXAiOiJKV1Qi...:/ip4/127.0.0.1/tcp/2345/http"
+  forest-cli info show
+  ```
+</ParamField>
+
+<ParamField path="FOREST_MAX_CONCURRENT_CHAIN_EXCHANGE_REQUESTS" type="positive integer" default="3">
+  Maximum number of concurrent requests sent over the chain exchange protocol.
+</ParamField>
+
+<ParamField path="FOREST_RPC_BACKFILL_FULL_TIPSET_FROM_NETWORK" type="1 or true" default="false">
+  Whether to backfill full tipsets from the P2P network when they are missing from local storage.
+</ParamField>
+
+---
+
+## Logging
+
+<ParamField path="RUST_LOG" type="string" default="(empty)">
+  Controls log level using Rust's standard filtering syntax. Supports per-module overrides.
+
+  ```bash
+  # All debug logs, but limit libp2p service to info
+  RUST_LOG="debug,forest_libp2p::service=info" forest
+  ```
+</ParamField>
+
+<ParamField path="FOREST_LIBP2P_METRICS_ENABLED" type="1 or true" default="(empty)">
+  Include libp2p metrics in Forest's Prometheus output.
+</ParamField>
+
+---
+
+## Database
+
+<ParamField path="FOREST_DB_DEV_MODE" type="string" default="current">
+  Controls which database Forest uses. See the [value table below](#forest_db_dev_mode-values) for details.
+</ParamField>
+
+<ParamField path="FOREST_CAR_LOADER_FILE_IO" type="1 or true" default="false">
+  Load CAR files using `RandomAccessFile` instead of memory-mapped I/O (`Mmap`). Useful in environments where `mmap` is unreliable or restricted.
+</ParamField>
+
+<ParamField path="FOREST_DISABLE_BAD_BLOCK_CACHE" type="1 or true" default="(empty)">
+  Disables the bad block cache. Not recommended for production.
+</ParamField>
+
+<ParamField path="FOREST_ZSTD_FRAME_CACHE_DEFAULT_MAX_SIZE" type="positive integer (bytes)" default="268435456">
+  Maximum size of the zstd frame cache in bytes. Default is 256 MiB.
+</ParamField>
+
+<ParamField path="FOREST_TIPSET_CACHE_DISABLED" type="1 or true" default="(empty)">
+  Disables the tipset cache. Used internally by development and tool subcommands. Do not set in production.
+</ParamField>
+
+<ParamField path="FOREST_MESSAGES_IN_TIPSET_CACHE_SIZE" type="positive integer" default="100">
+  Size of the internal cache mapping tipsets to their messages.
+</ParamField>
+
+### `FOREST_DB_DEV_MODE` values
+
+By default, Forest creates a database at its current version or migrates to it. This behavior can be overridden:
+
+| Value | Description |
+|-------|-------------|
+| `current` or (unset) | Forest creates a new database at the current version or attempts a migration. Falls back to creating a new database on failure. |
+| `latest` | Forest uses the latest versioned database. No migration is performed. |
+| other (e.g., `cthulhu`) | Forest uses the named database if it exists, otherwise creates one with that name. |
+
+Databases are stored by default at `<DATA_DIR>/<chain>/`, e.g., `$HOME/.local/share/forest/calibnet`.
+
+---
+
+## Snapshots
+
+<ParamField path="FOREST_AUTO_DOWNLOAD_SNAPSHOT_PATH" type="URL or file path" default="(empty)">
+  Override the snapshot path or URL used when `--auto-download-snapshot` is passed on the command line.
+
+  ```bash
+  FOREST_AUTO_DOWNLOAD_SNAPSHOT_PATH=/var/tmp/forest_snapshot_calibnet.forest.car.zst forest --chain calibnet --auto-download-snapshot
+  ```
+</ParamField>
+
+<ParamField path="FOREST_DOWNLOAD_CONNECTIONS" type="positive integer" default="5">
+  Number of parallel HTTP connections used when downloading snapshots.
+</ParamField>
+
+---
+
+## F3 (Fast Finality)
+
+<ParamField path="FOREST_F3_SIDECAR_FFI_ENABLED" type="1 or true" default="hard-coded per chain">
+  Whether to start the F3 sidecar via FFI. The default depends on the selected network.
+</ParamField>
+
+<ParamField path="FOREST_F3_CONSENSUS_ENABLED" type="1 or true" default="hard-coded per chain">
+  Whether to apply F3 consensus to the node. The default depends on the selected network.
+</ParamField>
+
+<ParamField path="FOREST_F3_FINALITY" type="integer" default="inherited from chain config">
+  Sets the chain finality in epochs for the F3 manifest. Example: `900`.
+</ParamField>
+
+<ParamField path="FOREST_F3_PERMANENT_PARTICIPATING_MINER_ADDRESSES" type="comma-separated strings" default="(empty)">
+  Miner addresses that permanently participate in F3.
+
+  ```bash
+  FOREST_F3_PERMANENT_PARTICIPATING_MINER_ADDRESSES="t0100,t0101" forest
+  ```
+</ParamField>
+
+<ParamField path="FOREST_F3_ROOT" type="directory path" default="[FOREST_DATA_ROOT]/f3">
+  Data directory for F3 state.
+</ParamField>
+
+<ParamField path="FOREST_F3_BOOTSTRAP_EPOCH" type="integer" default="-1">
+  Bootstrap epoch for F3. Set to `-1` to use the network default.
+</ParamField>
+
+<ParamField path="FOREST_F3_SIDECAR_RPC_ENDPOINT" type="string" default="127.0.0.1:23456">
+  RPC endpoint for the F3 sidecar process.
+</ParamField>
+
+<ParamField path="FOREST_F3_INITIAL_POWER_TABLE" type="CID string" default="(empty)">
+  Sets the F3 initial power table CID. Example: `bafyreicmaj5hhoy5mgqvamfhgexxyergw7hdeshizghodwkjg6qmpoco7i`.
+</ParamField>
+
+<ParamField path="FOREST_ETH_V1_DISABLE_F3_FINALITY_RESOLUTION" type="1 or true" default="(empty)">
+  Disables F3 finality resolution in Ethereum `v1` RPC methods.
+</ParamField>
+
+---
+
+## Metrics / Event Filters
+
+<ParamField path="FOREST_MAX_FILTERS" type="integer" default="100">
+  Maximum number of active event filters.
+</ParamField>
+
+<ParamField path="FOREST_MAX_FILTER_RESULTS" type="positive integer" default="10000">
+  Maximum number of results returned per filter query.
+</ParamField>
+
+<ParamField path="FOREST_MAX_FILTER_HEIGHT_RANGE" type="positive integer" default="2880">
+  Maximum block height range allowed for a filter query. The default of 2880 epochs is approximately one day on mainnet.
+</ParamField>
+
+<ParamField path="FOREST_TRACE_FILTER_MAX_RESULT" type="positive integer" default="500">
+  Maximum number of results returned per request by `trace_filter`.
+</ParamField>
+
+---
+
+## Ethereum
+
+<ParamField path="FOREST_CHAIN_INDEXER_ENABLED" type="1 or true" default="false">
+  Whether to index the chain to support the Ethereum RPC API (`eth_*` methods). Required for Ethereum compatibility.
+
+  ```bash
+  FOREST_CHAIN_INDEXER_ENABLED=1 forest --chain mainnet
+  ```
+</ParamField>
+
+<ParamField path="FOREST_ETH_BLOCK_CACHE_SIZE" type="positive integer" default="500">
+  Size of the Ethereum block cache.
+</ParamField>
+
+---
+
+## Proofs
+
+<ParamField path="FIL_PROOFS_PARAMETER_CACHE" type="directory path" default="(empty)">
+  Path to a directory that caches Filecoin proof parameter files. Example: `/var/tmp/filecoin-proof-parameters`.
+</ParamField>
+
+<ParamField path="IPFS_GATEWAY" type="URL" default="https://proofs.filecoin.io/ipfs/">
+  The IPFS gateway used for downloading proof parameters.
+</ParamField>
+
+<ParamField path="FOREST_FORCE_TRUST_PARAMS" type="1 or true" default="false">
+  Trust proof parameters downloaded from Cloudflare/IPFS without additional verification.
+</ParamField>
+
+<ParamField path="FOREST_PROOFS_ONLY_IPFS_GATEWAY" type="1 or true" default="false">
+  Use only the IPFS gateway for proof parameter downloads, bypassing any other sources.
+</ParamField>
+
+<ParamField path="FOREST_ACTOR_BUNDLE_PATH" type="file path" default="(empty)">
+  Path to a local actor bundle (`.car.zst`). When unset, Forest downloads the bundle from remote servers.
+</ParamField>
+
+---
+
+## Garbage Collection
+
+<ParamField path="FOREST_SNAPSHOT_GC_INTERVAL_EPOCHS" type="non-negative integer" default="20160">
+  Number of epochs between automatic GC runs. The default of 20160 epochs is 7 days on mainnet. Set to `0` to disable scheduled GC (equivalent to `--no-gc`).
+</ParamField>
+
+<ParamField path="FOREST_SNAPSHOT_GC_CHECK_INTERVAL_SECONDS" type="non-negative integer" default="300">
+  How often Forest checks whether a GC run is due, in seconds.
+</ParamField>
+
+<ParamField path="FOREST_SNAPSHOT_GC_KEEP_STATE_TREE_EPOCHS" type="non-negative integer" default="2000">
+  Number of the most recent epochs of state trees to retain after a GC run. Increasing this value allows more historical state queries but uses more disk space.
+</ParamField>
+
+---
+
+## Security / JWT
+
+<ParamField path="FOREST_JWT_DISABLE_EXP_VALIDATION" type="1 or true" default="(empty)">
+  Disables JWT expiration validation for all tokens. Intended for controlled environments where token sharing across systems is required (e.g., load-balancing with Lotus).
+
+  <Warning>
+    Disabling expiration checks allows expired tokens to authenticate successfully. This significantly weakens the security of your node. Only use this in tightly controlled, non-public environments.
+  </Warning>
+</ParamField>
+
+---
+
+## Drand configuration
+
+The Drand randomness beacon can be overridden per network type. The value must be a JSON object with the following structure:
+
+```json
+{
+  "servers": ["https://api.drand.sh/"],
+  "chain_info": {
+    "public_key": "83cf0f2896adee7eb8b5f01fcad3912212c437e0073e911fb90022d3e760183c8c4b450b6a0a6c3ac6a5776a2d1064510d1fec758c921cc22b0e17e63aaf4bcb5ed66304de9cf809bd274ca73bab4af5a6e9c76a4bc09e76eae8991ef5ece45a",
+    "period": 3,
+    "genesis_time": 1692803367,
+    "hash": "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971",
+    "groupHash": "f477d5c89f21a17c863a7f937c6a6d15859414d2be09cd448d4279af331c5d3e"
+  },
+  "network_type": "Quicknet"
+}
+```
+
+| Variable | Network |
+|----------|---------|
+| `FOREST_DRAND_MAINNET_CONFIG` | Override `DRAND_MAINNET` |
+| `FOREST_DRAND_QUICKNET_CONFIG` | Override `DRAND_QUICKNET` |
+| `FOREST_DRAND_INCENTINET_CONFIG` | Override `DRAND_INCENTINET` |
+
+<ParamField path="FOREST_IGNORE_DRAND" type="1 or true" default="(empty)">
+  Skip Drand randomness validation entirely. Use only in development or isolated test environments.
+</ParamField>
+
+---
+
+## State migration (advanced)
+
+<ParamField path="FOREST_STATE_MIGRATION_THREADS" type="integer" default="machine-dependent">
+  Number of threads in the state migration thread pool. Advanced users only — incorrect values can slow migration significantly.
+</ParamField>
+
+<ParamField path="FOREST_STATE_MIGRATION_DB_WRITE_BUFFER" type="non-negative integer" default="10000">
+  Size of the database write buffer during state migration. Each 10,000 units consumes approximately 10 MiB of RAM.
+</ParamField>
+
+---
+
+## Build-time only
+
+<ParamField path="FOREST_F3_SIDECAR_FFI_BUILD_OPT_OUT" type="1 or true">
+  When set at build time, the Go F3 sidecar is not compiled and linked into the Forest binary. Has no effect at runtime.
+
+  ```bash
+  FOREST_F3_SIDECAR_FFI_BUILD_OPT_OUT=1 cargo build --profile debugging
+  ```
+</ParamField>

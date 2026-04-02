@@ -1,0 +1,111 @@
+---
+title: RPC method filtering
+description: Restrict which JSON-RPC methods are accessible on your Forest node using a filter list file, with examples for common security and resource-limiting scenarios.
+---
+
+When running a Forest node — especially a public-facing one — you may want to restrict which RPC methods clients can call. Method filtering lets you block individual methods, namespaces, or entire categories of operations without touching JWT configuration.
+
+## How filtering relates to JWT authentication
+
+<Note>
+RPC method filtering and [JWT authentication](/operations/security) are independent but complementary mechanisms. Filtering is evaluated **first**: if a method is disallowed by the filter list, the request is rejected immediately with `403 Forbidden` and the JWT token is never inspected. Use filtering to enforce hard limits on what can be called at all, and JWT to control who can call privileged methods that remain enabled.
+</Note>
+
+## Enabling a filter list
+
+Pass the `--rpc-filter-list` flag with a path to your filter file when starting the daemon:
+
+```shell
+forest --chain calibnet --rpc-filter-list /etc/forest/filter-list.txt
+```
+
+If no filter list is provided, all methods are allowed by default.
+
+## Filter list format
+
+Each line in the file follows one of three forms:
+
+| Prefix | Meaning |
+|--------|---------|
+| `!Method.Name` | Disallow exactly this method (returns `403 Forbidden`) |
+| `Method.Prefix` | Allow all methods whose name contains this string; all non-matching methods are disallowed |
+| `# comment` | Ignored — use for documentation |
+
+**Key rule:** As soon as at least one un-prefixed (allow) pattern appears in the file, all methods that do not match any allow pattern are blocked by default. A file with only `!`-prefixed lines blocks just those methods and leaves everything else open.
+
+<Warning>
+Some methods have aliases. This is most common in the `Filecoin.Eth.*` namespace, where both `Filecoin.EthGasPrice` and `eth_gasPrice` are valid names for the same method. You must filter **both** to fully block the method. See the [Lotus eth_aliases source](https://github.com/filecoin-project/lotus/blob/a9718c841e1fced8afc6e9fee2db2a2b565acc42/api/eth_aliases.go) for the full alias list.
+</Warning>
+
+## Example filter lists
+
+<AccordionGroup>
+  <Accordion title="Block a single expensive method">
+    Disallow `ChainExport` (chain snapshot export) while leaving all other methods open:
+
+    ```plaintext
+    # Disabling the snapshot exporting — very resource-intensive
+    !Filecoin.ChainExport
+    ```
+
+    Attempting to export after this filter is applied:
+
+    ```shell
+    forest-cli snapshot-export
+    ```
+
+    ```console
+    Getting ready to export...
+    Error: ErrorObject { code: ServerError(403), message: "Forbidden", data: None }
+    ```
+  </Accordion>
+
+  <Accordion title="Allow only a single method">
+    Allow only `Filecoin.StateCall`; every other method returns `403`:
+
+    ```plaintext
+    Filecoin.StateCall
+    ```
+  </Accordion>
+
+  <Accordion title="Allow a namespace, block one method within it">
+    Allow all `Filecoin.Chain*` methods except `ChainExport`:
+
+    ```plaintext
+    Filecoin.Chain
+    !Filecoin.ChainExport
+    ```
+
+    Methods like `ChainGetTipSet` and `ChainGetBlock` remain accessible; `ChainExport` does not.
+  </Accordion>
+
+  <Accordion title="Block Ethereum gas estimation methods (with aliases)">
+    ```plaintext
+    !Filecoin.EthGasPrice
+    !eth_gasPrice
+    !Filecoin.EthEstimateGas
+    !eth_estimateGas
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Recommended filter list for public RPC nodes
+
+If you operate a public node, the following methods are worth blocking even for unauthenticated (no JWT) access, to protect against resource exhaustion:
+
+```plaintext
+# Creates a full chain snapshot and writes it to disk — very resource-intensive.
+!Filecoin.ChainExport
+
+# Potentially CPU-intensive state replay operations.
+!Filecoin.StateCompute
+!Filecoin.StateReplay
+
+# Extremely memory-intensive on mainnet (easily exceeds 64 GB per call).
+# Safe to enable on calibnet/testnets.
+!Filecoin.StateMarketDeals
+```
+
+<Tip>
+Start with the list above and add further restrictions based on your node's observed load. Use the Prometheus metrics endpoint to identify which RPC methods consume the most resources in your environment.
+</Tip>

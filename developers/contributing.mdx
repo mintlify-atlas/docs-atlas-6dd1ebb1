@@ -1,0 +1,249 @@
+---
+title: Contributing
+description: How to contribute to Forest — commit conventions, code style rules, PR workflow, testing requirements, and where to get help.
+---
+
+All types of contributions are welcome — bug reports, feature requests, documentation improvements, and code changes. This page covers the workflow and standards expected of contributors.
+
+## Before you start
+
+<Steps>
+  <Step title="Install the toolchain">
+    Forest is primarily written in Rust. Install the version pinned in `rust-toolchain.toml` using [rustup](https://www.rust-lang.org/tools/install).
+
+    Go is required for the F3 sidecar. Install the version specified in `go.work` from [golang.org](https://golang.org/doc/install).
+
+    Install additional dev tools:
+    ```bash
+    mise install-lint-tools
+    ```
+  </Step>
+  <Step title="Fork and clone the repository">
+    Fork `ChainSafe/forest` on GitHub, then clone your fork locally.
+  </Step>
+  <Step title="Verify the build and tests pass">
+    ```bash
+    mise test
+    ```
+    Requires [cargo-nextest](https://nexte.st/) (`cargo install cargo-nextest --locked`). Confirm everything is green before making any changes.
+  </Step>
+</Steps>
+
+## Finding something to work on
+
+- Browse [open issues](https://github.com/ChainSafe/forest/issues) labelled `good first issue` or `help wanted`
+- Check [GitHub Discussions](https://github.com/ChainSafe/forest/discussions) for ongoing conversations
+- Ask in `#fil-forest-help` on [Filecoin Slack](https://filecoin.io/slack) if you have questions before starting
+
+## Commit messages
+
+Forest uses [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). All commit messages must follow this format:
+
+```
+<type>: <short description>
+```
+
+<Tabs>
+  <Tab title="Good examples">
+    ```
+    feat: add Filecoin.EthTraceTransaction RPC method
+    fix: correct gas estimation for EIP-1559 transactions
+    chore: update fil-actor-states to v13.0.1
+    docs: add state migration guide for NV25
+    refactor: simplify TipsetStateCache eviction logic
+    test: add snapshot test for Filecoin.ChainGetEvents
+    ```
+  </Tab>
+  <Tab title="Bad examples">
+    ```
+    fixed bug
+    WIP
+    changes
+    update stuff
+    ```
+  </Tab>
+</Tabs>
+
+Common type prefixes:
+
+| Type | Use for |
+|---|---|
+| `feat` | New functionality |
+| `fix` | Bug fixes |
+| `chore` | Dependency updates, tooling, CI changes |
+| `docs` | Documentation-only changes |
+| `refactor` | Code restructuring without behaviour change |
+| `test` | Adding or fixing tests |
+| `perf` | Performance improvements |
+
+## Contributor License Agreement (CLA)
+
+First-time contributors must sign the Contributor License Agreement. A bot will prompt you automatically when you open your first pull request. The CLA requires that you have authored 100% of the contribution and hold the necessary rights to submit it under the project license.
+
+## Pull request workflow
+
+<Steps>
+  <Step title="Create a focused branch">
+    Keep each PR narrowly scoped. Smaller PRs are reviewed faster.
+  </Step>
+  <Step title="Run all checks locally">
+    ```bash
+    mise fmt     # Format Rust, TOML, Markdown, YAML
+    mise lint    # Run all linters
+    mise test    # Run the full test suite
+    ```
+    All three must pass before submitting. CI will enforce the same checks.
+  </Step>
+  <Step title="Fill the PR template exhaustively">
+    Describe what changed, why it changed, how it was tested, and any migration steps required. Incomplete PR templates slow down review.
+  </Step>
+  <Step title="Respond to review feedback promptly">
+    Address comments with code changes or clear explanations. Do not resolve threads you did not open.
+  </Step>
+</Steps>
+
+<Tip>
+  If your PR is a work in progress, open it as a draft. This prevents accidental merges and signals to reviewers that it is not ready.
+</Tip>
+
+## Code style
+
+### Error handling
+
+Use `anyhow::Result<T>` for fallible operations throughout Forest. Add context to errors with `.context()` so failures are traceable:
+
+```rust
+some_operation().context("Failed to execute VM")?
+```
+
+Never use `.unwrap()` in production code. Use `?` to propagate errors or `.expect()` with a descriptive message when a panic is truly unrecoverable:
+
+```rust
+// Acceptable — a genuinely invariant condition with a clear message
+let genesis = store.get_genesis().expect("genesis block must exist at startup");
+
+// Not acceptable in production code
+let genesis = store.get_genesis().unwrap();
+```
+
+### Indexing
+
+Never use direct indexing (`slice[i]`) in production code. Use `.get()` and handle the `Option`. This rule is enforced by clippy:
+
+```rust
+// Correct
+if let Some(peer) = peers.get(index) {
+    handle_peer(peer);
+}
+
+// Will fail clippy
+let peer = peers[index];
+```
+
+### Banned in non-test code
+
+- `dbg!()` — remove before submitting; use structured logging instead
+- `todo!()` — leave no unimplemented stubs in merged code
+- `println!()` — use `tracing::info!()` or similar
+
+### String enums
+
+Use the `strum` crate for enum-to-string conversions rather than hand-rolling `Display` or `From<&str>` implementations.
+
+### Common trait derives
+
+Use `derive_more` for standard trait implementations (`Display`, `From`, `Into`, `Add`, etc.) to avoid boilerplate.
+
+### Async and concurrency
+
+- The Tokio runtime is used for all async execution
+- Offload CPU-intensive work (VM execution, cryptography) to `tokio::task::spawn_blocking`
+- Prefer channel-based communication between tasks (flume or Tokio channels) over shared mutable state
+
+### Module organisation
+
+Each module should have:
+- `mod.rs` — public API exports only
+- Private submodules for implementation details
+- Clear trait boundaries to keep modules independently testable
+
+## Documentation
+
+Public functions, structs, and traits must have doc comments. Follow the team's [Documentation practices](https://github.com/ChainSafe/forest/wiki/Documentation-practices) for formatting conventions.
+
+```rust
+/// Computes the state root for the given tipset by re-executing all messages
+/// in the parent tipset against the parent state.
+///
+/// Results are cached in [`TipsetStateCache`] to avoid redundant re-execution.
+pub async fn compute_tipset_state(&self, tipset: &Tipset) -> Result<Cid> {
+    // ...
+}
+```
+
+## Testing
+
+### Running tests
+
+<CodeGroup>
+
+```bash Full suite
+mise test
+```
+
+```bash Specific module
+cargo nextest run --cargo-profile quick state_manager::
+```
+
+```bash Single test with output
+cargo nextest run --cargo-profile quick --no-capture <test_name>
+```
+
+```bash Doctests
+mise test:docs
+```
+
+</CodeGroup>
+
+### Testing conventions
+
+- Use `#[cfg(test)]` for unit test modules within the same file
+- Use `#[cfg(feature = "doctest-private")]` for doctests on private items
+- Database tests that cannot run in parallel must use `#[serial_test::serial]`
+- Shared fixtures and helpers live in `test_utils/`
+
+### Code coverage
+
+```bash
+# Requires cargo-llvm-cov: cargo install cargo-llvm-cov
+mise codecov
+```
+
+## Reporting bugs
+
+Before filing a bug report:
+
+1. Update to the latest Forest release and confirm the bug still exists
+2. Search [existing issues](https://github.com/ChainSafe/forest/issues) — the bug may already be tracked
+3. Collect relevant information: stack trace, OS and platform, Forest version, reproduction steps
+
+File bug reports using the [bug report template](https://github.com/ChainSafe/forest/issues/new?assignees=&labels=Type%3A+Bug&projects=&template=1-bug_report.md&title=).
+
+<Warning>
+  Never report security vulnerabilities in public GitHub issues. Send security-related bugs by email to the Forest team privately.
+</Warning>
+
+## Suggesting enhancements
+
+Use the [feature request template](https://github.com/ChainSafe/forest/issues/new?assignees=&labels=Type%3A+Request&projects=&template=2-user_request.md&title=). Include a step-by-step description, the current vs. expected behaviour, and why the enhancement would benefit most Forest users.
+
+## Getting help
+
+<CardGroup cols={2}>
+  <Card title="GitHub Discussions Q&A" icon="message-circle" href="https://github.com/ChainSafe/forest/discussions/categories/forest-q-a">
+    Ask questions and get answers from the maintainers and community.
+  </Card>
+  <Card title="Filecoin Slack" icon="slack" href="https://filecoin.io/slack">
+    Join `#fil-forest-help` for implementation questions and `#fil-implementers` for cross-team coordination.
+  </Card>
+</CardGroup>

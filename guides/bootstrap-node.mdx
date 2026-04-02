@@ -1,0 +1,121 @@
+---
+title: Running a bootstrap node
+description: Run Forest as a stateless bootstrap node to help new peers discover and join the Filecoin network, with guidance on peer counts and identity migration from Lotus.
+---
+
+A bootstrap node is the first point of contact for a new node joining the Filecoin network. When a fresh node starts up, it reaches out to a set of known bootstrap addresses to get an initial list of peers it can sync from. Every Forest node ships with a hardcoded list of bootstrap peers that can be overridden via the configuration file.
+
+## Stateless mode
+
+Any Forest node can serve as a bootstrap node, but running it in **stateless mode** is recommended. A stateless node:
+
+- Connects to the P2P swarm but does not store the network's state
+- Does not sync or validate the chain
+- Reports the genesis tipset as its heaviest tipset (unless initialized with a snapshot)
+- Responds to `ChainExchange` requests with partial responses
+
+This dramatically reduces hardware requirements — no large database, no memory-intensive state computation — making it suitable for low-cost, always-on infrastructure.
+
+## Starting a bootstrap node
+
+<Steps>
+  <Step title="Start Forest in stateless mode">
+    ```shell
+    forest --stateless
+    ```
+
+    The `--stateless` flag enables bootstrap-only operation.
+  </Step>
+
+  <Step title="Increase the peer count limit">
+    The default peer count is tuned for regular nodes and is too low for a bootstrap node that needs to handle many simultaneous connections:
+
+    ```shell
+    forest --stateless --target-peer-count 10000
+    ```
+
+    Adjust `--target-peer-count` based on the expected traffic and your server's capacity.
+  </Step>
+
+  <Step title="Find your multiaddress">
+    Once the node is running, retrieve its multiaddress so other nodes can reference it:
+
+    ```shell
+    forest-cli net listen
+    ```
+
+    Sample output:
+
+    ```console
+    /ip4/1.2.3.4/tcp/12345/p2p/12D3KooWExamplePeerID...
+    ```
+
+    Publish this address so operators can add it to their configuration files or bootstrap peer lists.
+  </Step>
+</Steps>
+
+## Peer discovery mechanisms
+
+Forest uses two peer discovery protocols that bootstrap nodes benefit from:
+
+| Protocol | Description |
+|----------|-------------|
+| **Kademlia DHT** | Distributed hash table for global peer discovery; new nodes query the DHT to find peers |
+| **mDNS** | Local network multicast discovery; useful for development and local cluster setups |
+
+Both are enabled by default. A well-connected bootstrap node with a high `--target-peer-count` will propagate its address through the DHT, making it discoverable without manual configuration by other nodes.
+
+## Migrating peer identity from Lotus
+
+If you are replacing a Lotus bootstrap node with Forest (or vice versa), you can preserve the node's peer identity — important because other nodes may have your peer ID cached.
+
+### Lotus → Forest
+
+<Steps>
+  <Step title="Back up both keystores">
+    - Lotus keystore: `~/.lotus/keystore/`
+    - Forest keystore: `~/.local/share/forest/libp2p/`
+  </Step>
+
+  <Step title="Locate the libp2p host key in the Lotus keystore">
+    Identify the file with `"Type": "libp2p-host"`:
+
+    ```json
+    { "Type": "libp2p-host", "PrivateKey": "<KEY>" }
+    ```
+
+    Copy the `PrivateKey` value to a file named `lotus_key`.
+  </Step>
+
+  <Step title="Convert to Forest keypair format">
+    ```shell
+    forest-tool shed key-pair-from-private-key $(cat lotus_key) | base64 -d > keypair
+    ```
+  </Step>
+
+  <Step title="Install the keypair">
+    ```shell
+    mv keypair ~/.local/share/forest/libp2p/keypair
+    ```
+
+    Forest will use this identity on next startup.
+  </Step>
+</Steps>
+
+### Forest → Lotus
+
+<Steps>
+  <Step title="Export the private key from Forest">
+    ```shell
+    forest-tool shed private-key-from-key-pair > lotus_key
+    ```
+  </Step>
+
+  <Step title="Update the Lotus keystore">
+    Open the file in `~/.lotus/keystore/` that has `"Type": "libp2p-host"` and replace its `"PrivateKey"` value with the content of `lotus_key`.
+  </Step>
+</Steps>
+
+## Reference
+
+- [DHT Bootstrap nodes — IPFS blog](https://blog.ipfs.tech/2023-rust-libp2p-based-ipfs-bootstrap-node/#ipfs-public-dht-bootstrap-nodes)

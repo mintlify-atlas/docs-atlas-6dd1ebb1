@@ -1,0 +1,277 @@
+---
+title: Installation
+description: Install the Forest Filecoin node using Docker, pre-built binaries, or by building from source.
+---
+
+Forest is a Filecoin node written in Rust. It can transfer FIL, host a high-performance RPC API, validate the Filecoin blockchain, and generate blockchain snapshots. You can install it using one of four methods below.
+
+<Tabs>
+  <Tab title="Docker">
+
+Docker is the recommended installation method. It requires no Rust toolchain or additional dependencies and works on Linux, macOS, and Windows.
+
+<Steps>
+  <Step title="Pull the Forest image">
+
+```bash
+docker pull ghcr.io/chainsafe/forest:latest
+```
+
+Images are published to the GitHub Container Registry under the following tags:
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release |
+| `vx.x.x` | Specific tagged version |
+| `edge` | Latest development build from `main` |
+| `date-digest` (e.g., `2023-02-17-5f27a62`) | All builds that landed on `main` |
+
+<Tip>
+If you have trouble pulling from the GitHub Container Registry, make sure you are [authenticated with your GitHub account](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
+</Tip>
+
+  </Step>
+  <Step title="Run the Forest daemon">
+
+```bash
+docker run --init -it --rm ghcr.io/chainsafe/forest:latest --help
+```
+
+  </Step>
+  <Step title="Run the Forest CLI">
+
+```bash
+docker run --init -it --rm --entrypoint forest-cli ghcr.io/chainsafe/forest:latest --help
+```
+
+To use `forest-cli` interactively inside a running container, open a shell session:
+
+```bash
+docker exec -it forest /bin/bash
+```
+
+  </Step>
+</Steps>
+
+<Note>
+A full list of available images can be found at [ghcr.io/chainsafe/forest](https://github.com/ChainSafe/forest/pkgs/container/forest).
+</Note>
+
+  </Tab>
+  <Tab title="Pre-built binaries">
+
+Pre-compiled binaries for Linux and macOS are published with every release.
+
+<Steps>
+  <Step title="Download the binary">
+
+Go to the [Forest releases page](https://github.com/ChainSafe/forest/releases) and download the archive for your platform.
+
+  </Step>
+  <Step title="Extract and move to PATH">
+
+```bash
+tar -xzf forest-*.tar.gz
+sudo mv forest forest-cli /usr/local/bin/
+```
+
+  </Step>
+  <Step title="Verify the installation">
+
+```bash
+forest --version
+```
+
+Expected output:
+
+```
+forest-filecoin 0.19.0+git.671c30c
+```
+
+  </Step>
+</Steps>
+
+  </Tab>
+  <Tab title="Build from source">
+
+Building from source requires a Rust compiler and a few system dependencies.
+
+<Steps>
+  <Step title="Install system dependencies">
+
+Install OS build tools. On Ubuntu/Debian:
+
+```bash
+sudo apt install build-essential clang
+```
+
+On Fedora:
+
+```bash
+sudo dnf install -y clang-devel
+```
+
+Install **Rust** via [rustup](https://rustup.rs/) and **Go** from [go.dev](https://go.dev/doc/install) (required to build the F3 sidecar module).
+
+</Step>
+  <Step title="Choose an installation option">
+
+<Tabs>
+  <Tab title="From crates.io (latest release)">
+
+```bash
+cargo install forest-filecoin
+```
+
+  </Tab>
+  <Tab title="From repository (latest development)">
+
+Clone the repository and use [mise-en-place](https://mise.jdx.dev/) to build and install:
+
+```bash
+git clone --depth 1 https://github.com/ChainSafe/forest.git
+cd forest
+mise install
+```
+
+  </Tab>
+</Tabs>
+
+Both approaches install `forest` and `forest-cli` to `~/.cargo/bin`. Make sure that directory is in your `PATH`.
+
+  </Step>
+  <Step title="Verify the installation">
+
+```bash
+forest --version
+```
+
+Expected output:
+
+```
+forest-filecoin 0.19.0+git.671c30c
+```
+
+  </Step>
+</Steps>
+
+  </Tab>
+  <Tab title="Systemd service">
+
+This method runs Forest as a managed system service that starts on boot and automatically restarts on failure.
+
+**Prerequisites:**
+
+- Forest installed and accessible at `/usr/local/bin/forest` (see another tab)
+- `root` or `sudo` access
+
+<Steps>
+  <Step title="Create the systemd service file">
+
+```bash
+sudo vi /etc/systemd/system/forest.service
+```
+
+Add the following content, adjusting paths and options as needed:
+
+```ini
+[Unit]
+Description=Forest Filecoin Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=forest
+Group=forest
+# Adjust the forest binary path if needed (check with: which forest)
+# For production, consider encrypting the keystore with --encrypt-keystore true
+ExecStart=/usr/local/bin/forest --chain calibnet --auto-download-snapshot --encrypt-keystore false --rpc-address=127.0.0.1:1234
+# For mainnet:
+# ExecStart=/usr/local/bin/forest --encrypt-keystore false
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+Environment=FOREST_CHAIN_INDEXER_ENABLED=1
+# Optional: disable F3 if it is not working properly
+# Environment=FOREST_F3_SIDECAR_FFI_ENABLED=0
+
+[Install]
+WantedBy=multi-user.target
+```
+
+<Tip>
+For production mainnet nodes, create a dedicated `forest` system user for better security isolation.
+</Tip>
+
+  </Step>
+  <Step title="Create a dedicated user (optional but recommended)">
+
+If you set `User=forest` in the service file, create the system user:
+
+```bash
+sudo adduser forest
+```
+
+Make sure the `forest` binary is accessible by this user.
+
+  </Step>
+  <Step title="Enable and start the service">
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable forest
+sudo systemctl start forest
+```
+
+  </Step>
+  <Step title="Verify the service is running">
+
+```bash
+sudo systemctl status forest
+```
+
+Expected output:
+
+```
+● forest.service - Forest Filecoin Node
+     Loaded: loaded (/etc/systemd/system/forest.service; enabled; vendor preset: enabled)
+     Active: active (running) since Wed 2026-01-28 10:30:15 UTC; 2min ago
+   Main PID: 12345 (forest)
+```
+
+  </Step>
+  <Step title="View logs">
+
+<CodeGroup>
+
+```bash Follow live logs
+journalctl -u forest -f
+```
+
+```bash View recent logs
+journalctl -u forest -n 100
+```
+
+</CodeGroup>
+
+  </Step>
+</Steps>
+
+<Note>
+`Restart=on-failure` ensures Forest automatically restarts if it crashes. `RestartSec=10s` adds a 10-second delay between restart attempts to prevent rapid restart loops.
+</Note>
+
+**Troubleshooting**
+
+If the service fails to start:
+
+1. Check logs: `journalctl -u forest -n 50`
+2. Verify the binary path: `which forest`
+3. Ensure the `forest` user has appropriate permissions
+4. Confirm that required directories exist and are writable
+
+  </Tab>
+</Tabs>

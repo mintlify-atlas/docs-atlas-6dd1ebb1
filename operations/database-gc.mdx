@@ -1,0 +1,142 @@
+---
+title: Database Garbage Collection
+description: How Forest's automatic garbage collector works, what it removes, how to configure it, and its impact on node performance and disk usage.
+---
+
+Forest includes a built-in garbage collector (GC) that removes unreachable IPLD blocks and stale snapshots from the database. GC runs automatically on a schedule and keeps disk usage bounded over time.
+
+## What GC does
+
+Over time, the Forest database accumulates blocks that are no longer reachable from the current chain head — orphaned tipsets, superseded state trees, and old CAR snapshots. Without GC, the database grows without bound.
+
+When GC runs, it:
+
+- Exports an effective standard lite snapshot in `.forest.car.zst` format
+- Stops the node
+- Purges non-persistent ParityDB columns (unreachable IPLD blocks)
+- Purges stale CAR database files
+- Restarts the node
+
+GC does **not** remove:
+
+- The persistent blockstore column
+- The settings column
+- The Ethereum index column
+
+<Note>
+A random small jitter is added to the GC interval on each cycle. This prevents a cluster of nodes from running GC simultaneously and causing a coordinated outage.
+</Note>
+
+## Default behavior
+
+Automatic GC is enabled by default. The default interval is **20160 epochs**, which is approximately 7 days on mainnet.
+
+You can confirm or override this with the `FOREST_SNAPSHOT_GC_INTERVAL_EPOCHS` environment variable:
+
+```bash
+# Run GC every 8000 epochs instead of the default 20160
+FOREST_SNAPSHOT_GC_INTERVAL_EPOCHS=8000 forest --chain mainnet
+```
+
+## Configuring GC
+
+All GC behavior is controlled via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FOREST_SNAPSHOT_GC_INTERVAL_EPOCHS` | `20160` | Epochs between GC runs (~7 days on mainnet) |
+| `FOREST_SNAPSHOT_GC_CHECK_INTERVAL_SECONDS` | `300` | How often Forest checks if GC is due (seconds) |
+| `FOREST_SNAPSHOT_GC_KEEP_STATE_TREE_EPOCHS` | `2000` | Most recent state tree epochs to retain after GC |
+
+### Retaining more historical state
+
+By default, GC keeps the 2000 most recent epochs of state trees. To support deeper historical queries (e.g., for archive nodes), increase this value:
+
+```bash
+# Keep a full week of state trees (mainnet epochs)
+FOREST_SNAPSHOT_GC_KEEP_STATE_TREE_EPOCHS=20160 forest --chain mainnet
+```
+
+<Warning>
+Retaining more state tree epochs increases the disk space consumed after a GC run. Each epoch of state tree data can be tens of gigabytes for mainnet.
+</Warning>
+
+## Disabling automatic GC
+
+Use the `--no-gc` flag to disable the GC scheduler at startup:
+
+```bash
+forest --chain mainnet --no-gc
+```
+
+This is appropriate for:
+
+- **Performance benchmarking**: Prevent GC pauses from skewing measurements.
+- **Short-lived testing**: When GC overhead is not desirable during quick iteration cycles.
+
+<Warning>
+Without GC, the database grows indefinitely. On mainnet, an active node can accumulate significant storage over days to weeks. Always re-enable GC for long-running or production deployments.
+</Warning>
+
+## Manually triggering GC
+
+You can trigger GC at any time using `forest-cli`, regardless of whether the scheduler is enabled:
+
+```bash
+forest-cli chain prune snap
+```
+
+A global lock ensures only one GC task runs at a time. If a GC run is already in progress, the manual trigger will wait or return an error.
+
+## Performance impact during GC
+
+GC runs in the background but has measurable effects during each phase:
+
+### RAM usage
+
+Forest uses **32 bytes of RAM per reachable block** while traversing the block graph. For a typical ~80 GiB mainnet snapshot, this results in approximately **2.5 GiB of additional RAM** during GC.
+
+### Disk usage
+
+During GC, Forest writes an intermediate lite snapshot before purging old data. This means disk usage temporarily spikes by approximately **the size of a standard lite snapshot** (~80 GiB on mainnet) before dropping.
+
+### Syncing pauses
+
+<AccordionGroup>
+  <Accordion title="During traversal">
+    The chain traversal algorithm runs concurrently with normal operation but may slightly increase latency for reads and writes.
+  </Accordion>
+  <Accordion title="During the stop/purge/restart cycle">
+    GC stops the node to purge ParityDB columns and stale CAR files, then restarts it. This reboot typically takes **10–30 seconds** on mainnet. During this window, RPC connections are dropped and syncing is paused.
+  </Accordion>
+</AccordionGroup>
+
+## Disk usage summary
+
+| Scenario | Behavior |
+|----------|----------|
+| GC enabled (default) | Disk usage stays bounded; spikes temporarily by one snapshot size during each GC run |
+| GC disabled (`--no-gc`) | Database grows continuously; old data is never purged |
+| High `FOREST_SNAPSHOT_GC_KEEP_STATE_TREE_EPOCHS` | Post-GC disk usage is higher; more historical state is accessible |
+
+## Example: production configuration
+
+A production mainnet node with GC tuned for moderate archive depth:
+
+```bash
+FOREST_SNAPSHOT_GC_INTERVAL_EPOCHS=20160 \
+FOREST_SNAPSHOT_GC_CHECK_INTERVAL_SECONDS=300 \
+FOREST_SNAPSHOT_GC_KEEP_STATE_TREE_EPOCHS=5000 \
+forest --chain mainnet --auto-download-snapshot
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" href="/operations/environment-variables">
+    Full reference for all GC and database environment variables.
+  </Card>
+  <Card title="Configuration" href="/operations/configuration">
+    Config file format and startup options.
+  </Card>
+</CardGroup>

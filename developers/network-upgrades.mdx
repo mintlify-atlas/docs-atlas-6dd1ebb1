@@ -1,0 +1,349 @@
+---
+title: Network Upgrades
+description: How Forest handles Filecoin network version upgrades — the implementation pipeline, state migrations, dependencies, coordination, and monitoring.
+---
+
+Filecoin network upgrades are protocol-level changes that activate at a predetermined epoch. Every Filecoin implementation — Forest, Lotus, Venus — must adopt them simultaneously to maintain consensus. This page covers how upgrades are planned, implemented in Forest, and verified before going live on mainnet.
+
+## What is a network upgrade?
+
+A network upgrade (network version bump) is a set of accepted Filecoin Improvement Proposals (FIPs) that take effect at a specific block height. The scope typically includes:
+
+- Changes to the **FVM** (Filecoin Virtual Machine)
+- Changes to **builtin actors** (smart contracts governing the protocol)
+- Potential **state migrations** — one-time transformations of all actor states
+
+The upgrade schedule is published in [Filecoin Core Devs discussions](https://github.com/filecoin-project/core-devs/discussions), with exact epochs announced at least two weeks before activation (usually a month or more).
+
+## Implementation pipeline
+
+Forest follows a staged implementation approach for every upgrade:
+
+```
+Skeleton with base migration
+  ├── State migrations
+  ├── Network-aware node changes
+  └── fil-actor-states update and release
+          ↓
+   Update to latest FVM
+          ↓
+      2k network testing
+          ↓
+  Butterflynet testing with Lotus
+          ↓
+  Calibration network upgrade
+          ↓
+     Mainnet upgrade
+```
+
+### Skeleton with base migration
+
+The first PR establishes the upgrade epoch, the new network version constant, and a base (no-op) migration scaffold. It acts as the integration point for all subsequent changes.
+
+### State migrations
+
+State migrations transform actor states from the old schema to the new one. They are described in detail in the relevant FIPs and the Go reference implementation at [`go-state-types`](https://github.com/filecoin-project/go-state-types).
+
+<Note>
+  Testing the state migration against a real network before the upgrade epoch is essential. Run `forest-tool shed migrate-state` and compare the resulting state root against Lotus's `lotus-shed migrate-state` output to verify both implementations produce the same result.
+</Note>
+
+### FVM update
+
+<Warning>
+  The FVM does not follow semantic versioning. A seemingly minor version bump (e.g., `4.3.1` → `4.3.2`) can contain breaking changes.
+</Warning>
+
+FVM upgrades range from soft (limited breaking changes) to hard (major version, e.g., `4.x` → `5.0`). Hard upgrades require significantly more development and testing effort.
+
+### fil-actor-states update
+
+Forest maintains a [fork of `builtin-actors`](https://github.com/ChainSafe/fil-actor-states) that strips smart contract quirks and exposes Rust interfaces compatible with Forest internals. The fork must be kept in sync with upstream releases.
+
+### Network testing stages
+
+| Stage | Purpose |
+|---|---|
+| **2k network** | Local devnet with a Lotus RC and a `builtin-actors` RC |
+| **Butterflynet** | FilOz-hosted testnet; multiple teams validate together |
+| **Calibnet** | Public testnet; real-world battle-testing before mainnet |
+| **Mainnet** | Production activation |
+
+---
+
+## Dependencies
+
+### Updating builtin actors
+
+<Steps>
+  <Step title="Sync the fork">
+    Update the `fil-actor-states` repository to the new bundle release tag.
+  </Step>
+  <Step title="Check for breaking changes">
+    Ensure the changes are compatible with Forest interfaces. Prepare a PR ahead of time for any required breaking change adjustments.
+  </Step>
+  <Step title="Cut a new release">
+    Tag and release the updated `fil-actor-states` crate.
+  </Step>
+  <Step title="Update Forest's dependency">
+    Update the `fil-actor-states` dependency in `Cargo.toml`.
+  </Step>
+  <Step title="Update bundle CIDs">
+    Add the new bundle CIDs to `src/networks/actors_bundle.rs`:
+    ```rust
+    "bafy2bzacecnhaiwcrpyjvzl4uv4q3jzoif26okl3m66q3cijp3dfwlcxwztwo" @ "v11.0.0" for "mainnet",
+    ```
+  </Step>
+  <Step title="Regenerate the actor metadata manifest">
+    ```bash
+    forest-tool state-migration generate-actors-metadata > build/manifest.json
+    ```
+  </Step>
+</Steps>
+
+### Updating the FVM (soft upgrade)
+
+<Steps>
+  <Step title="Update FVM in fil-actor-states">
+    Update the FVM dependency in the `fil-actor-states` fork.
+  </Step>
+  <Step title="Check compatibility">
+    Verify no breaking changes affect Forest's interfaces.
+  </Step>
+  <Step title="Release fil-actor-states">
+    Cut a new release of the fork.
+  </Step>
+  <Step title="Update Forest">
+    Update both the `fil-actor-states` dependency and the FVM crates directly referenced by Forest (`fvmX` and `fvm_sharedX` entries in `Cargo.toml`, where `X` is the major FVM version).
+  </Step>
+</Steps>
+
+---
+
+## Implementing a state migration
+
+This section follows the approach used for NV18 and NV19. The canonical reference is always the Go implementation in [`go-state-types`](https://github.com/filecoin-project/go-state-types).
+
+### Prerequisites
+
+- The actor bundle for the new version is released to [builtin-actors releases](https://github.com/filecoin-project/builtin-actors/releases)
+- The migration is specified in `go-state-types` (this is the source of truth)
+
+### Step 1 — Import the actor bundle
+
+Add the bundle CID to the `HeightInfos` struct in the relevant network definition file (e.g., `src/networks/calibnet/mod.rs`):
+
+```rust
+HeightInfo {
+    height: Height::Hygge,
+    epoch: 322_354,
+    bundle: Some(Cid::try_from("bafy2bzaced25ta3j6ygs34roprilbtb3f6mxifyfnm7z7ndquaruxzdq3y7lo").unwrap()),
+}
+```
+
+Also add the manifest CID and download URL to `src/networks/actors_bundle.rs` and ensure the bundle is mirrored in the Forest DO space at `https://forest-snapshots.fra1.cdn.digitaloceanspaces.com/actors/`.
+
+### Step 2 — Create the migration module
+
+Create a new module under `src/state_migration/nvXX/`. The cleanest approach is copying the previous upgrade's module and adapting it. Key files:
+
+- `mod.rs` — exports the migration function, defines pre- and post-migration state types, implements the system migrator and verifier
+- `migration.rs` — migration logic for each actor (translates `top.go` from Go)
+
+### Step 3 — Map actor codes and add migrators
+
+Load the current and new manifests, then map actor codes:
+
+```rust
+let state_tree = StateTree::new_from_root(store.clone(), state)?;
+let system_actor = state_tree
+    .get_actor(&Address::new_id(0))?
+    .ok_or_else(|| anyhow!("system actor not found"))?;
+
+let system_actor_state = store
+    .get_cbor::<SystemStateOld>(&system_actor.state)?
+    .ok_or_else(|| anyhow!("system actor state not found"))?;
+
+let current_manifest = Manifest::load_with_actors(&store, &system_actor_state.builtin_actors, 1)?;
+let new_manifest = Manifest::load(&store, &new_manifest, version)?;
+```
+
+For actors with no state changes, use `nil_migrator`:
+
+```rust
+for (name, code) in current_manifest.builtin_actors() {
+    let new_code = new_manifest.code_by_name(name)?;
+    self.add_migrator(*code, nil_migrator(*new_code));
+}
+```
+
+For actors with non-trivial changes, add a custom migrator:
+
+```rust
+self.add_migrator(
+    *current_manifest.get_init_code(),
+    init::init_migrator(*new_manifest.get_init_code()),
+);
+```
+
+<Warning>
+  `StateTree` versioning is independent of network and actor versioning. Use the correct `StateTreeVersion` for the target upgrade — mixing versions will produce an invalid state root.
+
+  | StateTreeVersion | Actors version |
+  |---|---|
+  | V0 | < v2 |
+  | V1 | v2 |
+  | V2 | v3 |
+  | V3 | v4 |
+  | V4 | v5 – v9 |
+  | V5 | v10 and above |
+</Warning>
+
+### Step 4 — Add a verifier (optional but recommended)
+
+```rust
+let verifier = Arc::new(Verifier::default());
+```
+
+The verifier checks at construction time that every builtin actor has been assigned a migrator, preventing silent omissions.
+
+### Step 5 — Add post-migration actions
+
+Some upgrades require creating new actors after the migration. For example, NV18 created the EAM and Ethereum Account actors:
+
+```rust
+self.add_post_migrator(Arc::new(EamPostMigrator));
+self.add_post_migrator(Arc::new(EthAccountPostMigrator));
+```
+
+### Step 6 — Create and run the migration object
+
+```rust
+let mut migration = StateMigration::<DB>::new(Some(verifier), post_migration_actions);
+migration.add_nv18_migrations(blockstore.clone(), state, &new_manifest_cid)?;
+
+let actors_in = StateTree::new_from_root(blockstore.clone(), state)?;
+let actors_out = StateTree::new(blockstore.clone(), StateTreeVersion::V5)?;
+let new_state = migration.migrate_state_tree(blockstore.clone(), epoch, actors_in, actors_out)?;
+```
+
+### Step 7 — Invoke at the correct height
+
+Register the migration function in `handle_state_migrations` in `src/state_manager/` so it runs automatically when the node processes the upgrade epoch.
+
+---
+
+## Testing state migrations
+
+### Snapshot-based test
+
+Run Forest against a snapshot taken after the upgrade, instructing it to validate the epochs surrounding the upgrade:
+
+```bash
+forest --chain calibnet \
+  --encrypt-keystore false \
+  --halt-after-import \
+  --height=-200 \
+  --import-snapshot <SNAPSHOT>
+```
+
+### Test-first development (for large migrations)
+
+For complex migrations (e.g., NV17), attach a debugger to unit tests with real state data:
+
+<Steps>
+  <Step title="Get the input state CID">
+    Run Forest with `--halt-after-import --height=-200`. The previous state CID appears in failure messages: `Previous state: <CID>`.
+  </Step>
+  <Step title="Export and compress the state">
+    ```bash
+    forest-cli state fetch <PREVIOUS_STATE_CID> <PREVIOUS_STATE_CID>.car
+    zstd <PREVIOUS_STATE_CID>.car
+    mv <PREVIOUS_STATE_CID>.car.zst src/state_migration/tests/data/
+    ```
+  </Step>
+  <Step title="Write a Rust unit test">
+    ```rust
+    #[tokio::test]
+    async fn test_nv17_state_migration_calibnet() -> Result<()> {
+        test_state_migration(
+            Height::Shark,
+            NetworkChain::Calibnet,
+            Cid::from_str("bafy2bzacedxtdhqjsrw2twioyaeomdk4z7umhgfv36vzrrotjb4woutphqgyg")?,
+            Cid::from_str("bafy2bzacecrejypa2rqdh3geg2u3qdqdrejrfqvh2ykqcrnyhleehpiynh4k4")?,
+        )
+        .await
+    }
+    ```
+  </Step>
+  <Step title="Write a Go reference test">
+    ```go
+    func TestStateMigrationNV17(t *testing.T) {
+        startRoot := cid.MustParse("bafy2bzacedxtdhqjsrw2twioyaeomdk4z7umhgfv36vzrrotjb4woutphqgyg")
+        newManifestCid := cid.MustParse("bafy2bzacedbedgynklc4dgpyxippkxmba2mgtw7ecntoneclsvvl4klqwuyyy")
+        epoch := abi.ChainEpoch(16800)
+        // ... load blockstore and run migration
+    }
+    ```
+  </Step>
+</Steps>
+
+### Performance testing
+
+Mainnet migrations can take several minutes on powerful hardware. To estimate duration before the upgrade:
+
+```bash
+# Download a recent mainnet snapshot, reschedule the migration 10 epochs before snapshot height,
+# import on a clean database, and validate.
+forest --encrypt-keystore false \
+  --import-snapshot forest_snapshot_mainnet_2023-11-22_height_3411557.forest.car.zst \
+  --height=-20
+```
+
+A state mismatch after the migration epoch is expected in this test — what matters is that the migration completes without OOM errors and within an acceptable time.
+
+---
+
+## Coordination and communication
+
+Network upgrades are coordinated by the [FilOz team](https://www.filoz.org) through:
+
+- Fortnightly Filecoin Implementers calls
+- The `#fil-implementers` channel in [Filecoin Slack](https://filecoin.io/slack)
+
+Forest communicates upgrades via:
+
+- [Forest Discussions](https://github.com/ChainSafe/forest/discussions)
+- The `#fil-forest-announcements` channel in Filecoin Slack
+
+## Monitoring an upgrade
+
+All Forest developers should have a synced node running the latest release at upgrade time:
+
+<Steps>
+  <Step title="Prepare the node">
+    Ensure a node running the latest Forest release is synced and following the chain head.
+  </Step>
+  <Step title="Join the monitoring room">
+    Connect to the upgrade Zoom room and actively participate in state comparison discussions.
+  </Step>
+  <Step title="Investigate anomalies immediately">
+    Any unexpected warnings, errors, or state mismatches must be investigated immediately. Do not wait.
+  </Step>
+  <Step title="Alert infrastructure if needed">
+    Contact the Forest infrastructure team if an emergency fix or snapshot replacement is required.
+  </Step>
+  <Step title="Monitor post-upgrade">
+    Continue monitoring for at least one to two hours after the upgrade epoch passes.
+  </Step>
+</Steps>
+
+### Useful commands during monitoring
+
+```bash
+# Compare the last 5 tipsets with another node to confirm you're on the same chain
+forest-cli chain head -n 5
+
+# Compute and print the state root at a specific epoch for comparison with Lotus/Venus
+forest-cli state compute --epoch <UPGRADE_EPOCH+5>
+```

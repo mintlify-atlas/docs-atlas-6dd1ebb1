@@ -1,0 +1,80 @@
+---
+title: "Forest — Rust Filecoin Node"
+description: "A high-performance Filecoin full node written in Rust. Sync the chain, run a JSON-RPC API, manage wallets, and generate snapshots — faster and leaner than Lotus."
+---
+
+Forest is a production-grade [Filecoin](https://filecoin.io/) full node built by [ChainSafe Systems](https://chainsafe.io). Written in Rust, it delivers the same Filecoin protocol compatibility as the canonical Lotus node while using a fraction of the memory and CPU.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Install Forest via Docker, pre-built binaries, or build from source
+  </Card>
+  <Card title="Syncing a Node" icon="rotate" href="/getting-started/syncing">
+    Connect to mainnet or calibnet and start syncing in minutes
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/forest">
+    Full reference for `forest`, `forest-cli`, `forest-wallet`, and `forest-tool`
+  </Card>
+  <Card title="JSON-RPC API" icon="code" href="/reference/rpc-overview">
+    Lotus-compatible JSON-RPC API with Ethereum compatibility layer
+  </Card>
+</CardGroup>
+
+## What you can do with Forest
+
+- **Sync the Filecoin blockchain** on mainnet, calibnet, or devnet
+- **Host a JSON-RPC API** compatible with Lotus and standard Ethereum clients
+- **Transfer FIL** and manage wallets with built-in key management
+- **Generate and import snapshots** — up to 3× faster than Lotus with 10× less memory
+- **Run as a bootstrap node** to strengthen the network
+- **Monitor your node** with Prometheus metrics, health check endpoints, and Grafana dashboards
+
+## The four binaries
+
+<CardGroup cols={2}>
+  <Card title="forest" icon="server" href="/reference/forest">
+    The daemon process. Connects to the Filecoin P2P network, syncs the chain, and serves the RPC API.
+  </Card>
+  <Card title="forest-cli" icon="terminal" href="/reference/forest-cli">
+    Human-friendly CLI wrappers around the JSON-RPC API. Use this to inspect the chain, manage the mpool, and check sync status.
+  </Card>
+  <Card title="forest-wallet" icon="wallet" href="/reference/forest-wallet">
+    Key management and FIL transfers. Works with both local and remote wallets.
+  </Card>
+  <Card title="forest-tool" icon="wrench" href="/reference/forest-tool">
+    Maintenance utilities — fetch snapshots, inspect CAR files, run benchmarks — without needing a running daemon.
+  </Card>
+</CardGroup>
+
+## Quick start
+
+<Steps>
+  <Step title="Install Forest">
+    Pull the latest Docker image — no Rust toolchain required:
+
+    ```bash
+    docker pull ghcr.io/chainsafe/forest:latest
+    ```
+  </Step>
+  <Step title="Start the daemon">
+    Run Forest on calibnet with automatic snapshot download:
+
+    ```bash
+    docker run --init -it --rm \
+      -v forest-data:/root/.local/share/forest \
+      ghcr.io/chainsafe/forest:latest \
+      --chain calibnet --auto-download-snapshot
+    ```
+  </Step>
+  <Step title="Check sync status">
+    In a second terminal, check that the node is syncing:
+
+    ```bash
+    docker exec -it <container> forest-cli sync status
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Forest is dual-licensed under [MIT](https://github.com/ChainSafe/forest/blob/main/LICENSE-MIT) and [Apache 2.0](https://github.com/ChainSafe/forest/blob/main/LICENSE-APACHE). Questions? Join [#fil-forest-help](https://filecoin.io/slack) on Filecoin Slack or open a [GitHub Discussion](https://github.com/ChainSafe/forest/discussions).
+</Note>

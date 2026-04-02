@@ -1,0 +1,242 @@
+---
+title: "JSON-RPC Overview"
+description: "Forest exposes a Lotus-compatible JSON-RPC 2.0 API over HTTP and WebSocket. Learn about endpoints, namespaces, connection options, and rate limits."
+---
+
+## What is the Forest JSON-RPC API?
+
+Forest exposes a **JSON-RPC 2.0** API compatible with the [Lotus node](https://github.com/filecoin-project/lotus). Any tooling built for Lotus — including `lotus-cli`, Filecoin SDKs, and block explorers — can connect to Forest without modification.
+
+The API is the primary interface for querying chain state, submitting messages, managing wallets, monitoring sync progress, and interacting with the Filecoin network.
+
+<Note>
+Since June 2025, Forest follows the [Common Node API (FRC-0104)](https://github.com/filecoin-project/FIPs/blob/master/FRCs/frc-0104.md) as the standard for `v1` RPC methods, replacing the Lotus-specific API as the primary reference.
+</Note>
+
+---
+
+## Endpoints
+
+| Endpoint | Default URL | Protocol |
+|----------|-------------|----------|
+| JSON-RPC v1 (stable) | `http://localhost:2345/rpc/v1` | HTTP POST / WebSocket |
+| JSON-RPC v0 (legacy) | `http://localhost:2345/rpc/v0` | HTTP POST / WebSocket |
+| WebSocket v1 | `ws://localhost:2345/rpc/v1` | WebSocket |
+| OpenRPC specification | `http://localhost:2345/openrpc` | HTTP GET |
+
+<Tip>
+Use `v1` for all new integrations. The `v0` endpoint is retained for backward compatibility with older Lotus tooling but may be deprecated in the future.
+</Tip>
+
+The RPC port and listen address can be changed with the `--rpc-address` flag when starting the daemon:
+
+```bash
+forest --chain calibnet --rpc-address 0.0.0.0:2345
+```
+
+---
+
+## Making a Basic RPC Call
+
+All requests use the standard JSON-RPC 2.0 envelope:
+
+```bash
+curl -X POST http://localhost:2345/rpc/v1 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"Filecoin.ChainHead","params":[]}'
+```
+
+A successful response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "Cids": [
+      { "/": "bafy2bzacedq3uxgpq6ot6lq3bzrqdcrxkpd3m3ugq3zrdh63x5lppmvmr5zwo" }
+    ],
+    "Blocks": [ { "Miner": "f01234", "Height": 4200000, "..." : "..." } ],
+    "Height": 4200000
+  }
+}
+```
+
+Error responses follow the JSON-RPC error format:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32600,
+    "message": "Invalid request"
+  }
+}
+```
+
+---
+
+## RPC Namespaces
+
+Forest organises its methods across several namespaces.
+
+<CardGroup cols={2}>
+  <Card title="Filecoin.Chain*" icon="link-chain">
+    Query blocks, tipsets, messages, and chain state. Includes `ChainHead`, `ChainGetBlock`, `ChainGetMessage`, and `ChainExport`.
+  </Card>
+  <Card title="Filecoin.State*" icon="database">
+    Read actor state and execute read-only calls. Includes `StateGetActor`, `StateCall`, `StateMinerInfo`, and `StateReplay`.
+  </Card>
+  <Card title="Filecoin.Mpool*" icon="inbox">
+    Interact with the message pool. Includes `MpoolGetNonce`, `MpoolPush`, `MpoolPending`, and `MpoolSelect`.
+  </Card>
+  <Card title="Filecoin.Wallet*" icon="wallet">
+    Manage keys and sign messages. Includes `WalletNew`, `WalletBalance`, `WalletSign`, and `WalletVerify`.
+  </Card>
+  <Card title="Filecoin.Net*" icon="network-wired">
+    Manage libp2p peer connections. Includes `NetPeers`, `NetAddrsListen`, `NetConnect`, and `NetDisconnect`.
+  </Card>
+  <Card title="Filecoin.Sync*" icon="arrows-rotate">
+    Monitor chain synchronisation. Includes `SyncState` and `SyncSubmitBlock`.
+  </Card>
+  <Card title="eth_* / Filecoin.Eth*" icon="ethereum">
+    Ethereum-compatible API. Standard `eth_*` aliases map to `Filecoin.Eth*` methods. Supports EIP-1559 transactions and `eth_subscribe`.
+  </Card>
+  <Card title="Filecoin.Gas*" icon="gas-pump">
+    Estimate gas costs. Includes `GasEstimateFeeCap`, `GasEstimateGasPremium`, and `GasEstimateMessageGas`.
+  </Card>
+</CardGroup>
+
+### Ethereum compatibility
+
+Every `Filecoin.Eth*` method has a lowercase `eth_*` alias. For example, `Filecoin.EthBlockNumber` and `eth_blockNumber` are equivalent. This allows standard Ethereum tooling (MetaMask, ethers.js, viem, cast) to connect directly to Forest.
+
+```bash
+# Using the eth_* alias directly
+curl -X POST http://localhost:2345/rpc/v1 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+```
+
+---
+
+## Connecting with `FULLNODE_API_INFO`
+
+The `FULLNODE_API_INFO` environment variable lets you point `forest-cli` and compatible tools at a node in one step. The format combines the JWT token with a multiaddr:
+
+```bash
+export FULLNODE_API_INFO="<TOKEN>:/ip4/127.0.0.1/tcp/2345/http"
+forest-cli chain head
+```
+
+For WebSocket connections, use `/ws` instead of `/http`:
+
+```bash
+export FULLNODE_API_INFO="<TOKEN>:/ip4/127.0.0.1/tcp/2345/ws"
+```
+
+See [RPC Authentication](/reference/rpc-authentication) for details on obtaining and managing tokens.
+
+---
+
+## WebSocket Subscriptions
+
+For real-time event streaming, connect via WebSocket and use `eth_subscribe`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "eth_subscribe",
+  "params": ["newHeads"]
+}
+```
+
+Supported subscription types:
+
+| Type | Description |
+|------|-------------|
+| `newHeads` | New block headers as they are added to the chain |
+| `logs` | Filtered EVM event logs matching a given filter spec |
+| `newPendingTransactions` | Hashes of newly submitted pending transactions |
+
+Each event is pushed as a JSON-RPC notification:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_subscription",
+  "params": {
+    "subscription": "0xcd0c3e8af590364c09d0fa6a1210faf5",
+    "result": { "number": "0x401b14", "hash": "0x...", "..." : "..." }
+  }
+}
+```
+
+Cancel a subscription with `eth_unsubscribe`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "eth_unsubscribe",
+  "params": ["0xcd0c3e8af590364c09d0fa6a1210faf5"]
+}
+```
+
+---
+
+## OpenRPC Specification
+
+Forest publishes a machine-readable [OpenRPC](https://open-rpc.org/) specification listing every method, its parameters, and return type:
+
+```bash
+curl http://localhost:2345/openrpc | jq '.methods[].name'
+```
+
+The spec follows OpenRPC 1.3.2 and can be imported into tools like the [OpenRPC Playground](https://playground.open-rpc.org/).
+
+---
+
+## Rate Limits and Timeouts
+
+Two environment variables govern the RPC server's resource limits:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FOREST_RPC_MAX_CONNECTIONS` | `1000` | Maximum simultaneous connections accepted by the RPC server |
+| `FOREST_RPC_DEFAULT_TIMEOUT` | `60` (seconds) | Per-request timeout; requests that exceed this duration are cancelled |
+
+```bash
+# Run with tighter limits for a public-facing node
+FOREST_RPC_MAX_CONNECTIONS=200 FOREST_RPC_DEFAULT_TIMEOUT=30 forest --chain calibnet
+```
+
+<Warning>
+Certain methods — particularly `Filecoin.StateMarketDeals`, `Filecoin.StateCompute`, and `Filecoin.ChainExport` — are extremely resource-intensive. For public nodes it is strongly recommended to restrict them using [RPC method filtering](/guides/rpc-filtering).
+</Warning>
+
+---
+
+## Method Filtering
+
+Forest supports allowlist and denylist filtering for RPC methods via the `--rpc-filter-list` flag. This is useful when running a public node where some methods should not be exposed.
+
+```bash
+forest --chain calibnet --rpc-filter-list /etc/forest/filter-list.txt
+```
+
+Example filter file that blocks resource-intensive methods:
+
+```plaintext
+# Deny snapshot export (very resource-intensive)
+!Filecoin.ChainExport
+# Deny compute (CPU-intensive)
+!Filecoin.StateCompute
+!Filecoin.StateReplay
+# Deny market deals lookup (>64 GB RAM on mainnet)
+!Filecoin.StateMarketDeals
+```
+
+Filtering is evaluated before JWT authentication — a filtered-out method returns `403 Forbidden` without inspecting the token.

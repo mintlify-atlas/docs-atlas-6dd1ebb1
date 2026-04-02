@@ -1,0 +1,239 @@
+---
+title: Running Forest with Docker
+description: Pull and run the Forest Filecoin node using Docker, configure volumes and port mappings, use forest-cli inside containers, and set up Docker Compose.
+---
+
+Forest is published as a multi-arch Docker image to the GitHub Container Registry. Native images are available for `linux/amd64` and `linux/arm64`, so the same image works on Intel servers and Apple Silicon Macs without emulation.
+
+## Image tags
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest stable release |
+| `latest-fat` | Latest stable release with proof parameters and other downloadable assets pre-loaded |
+| `edge` | Latest development build from the `main` branch |
+| `edge-fat` | Latest `main` build with pre-loaded assets |
+| `vX.Y.Z` | Pinned release (e.g., `v0.7.0`) — also available as `vX.Y.Z-fat` |
+| `date-digest` | Every build on `main`, e.g., `2023-02-17-5f27a62` — also available as `date-digest-fat` |
+
+The full list is available at [ghcr.io/chainsafe/forest](https://github.com/ChainSafe/forest/pkgs/container/forest).
+
+## Prerequisites
+
+Docker Engine (Community) on Linux, Docker for macOS, or Docker on WSL2. Rootless mode is strongly recommended:
+
+<Tip>
+Run Docker in rootless mode or use `podman` with a non-root user as a drop-in replacement (`alias docker=podman`). See the [rootless Docker installation guide](https://docs.docker.com/engine/security/rootless/) for setup instructions.
+</Tip>
+
+## Quick start
+
+### List available flags
+
+<CodeGroup>
+
+```shell Daemon
+docker run --init -it --rm ghcr.io/chainsafe/forest:latest --help
+```
+
+```shell CLI
+docker run --init -it --rm --entrypoint forest-cli ghcr.io/chainsafe/forest:latest --help
+```
+
+```shell Tool
+docker run --init -it --rm --entrypoint forest-tool ghcr.io/chainsafe/forest:latest --help
+```
+
+```shell Wallet
+docker run --init -it --rm --entrypoint forest-wallet ghcr.io/chainsafe/forest:latest --help
+```
+
+</CodeGroup>
+
+### Start a calibnet node
+
+<Tabs>
+  <Tab title="Interactive">
+    ```shell
+    docker run --init -it --rm \
+      --name forest \
+      ghcr.io/chainsafe/forest:latest \
+      --chain calibnet --auto-download-snapshot
+    ```
+  </Tab>
+  <Tab title="Background (detached)">
+    ```shell
+    docker run --init -d \
+      --name forest \
+      ghcr.io/chainsafe/forest:latest \
+      --chain calibnet --auto-download-snapshot
+    ```
+  </Tab>
+</Tabs>
+
+## Using forest-cli inside the container
+
+Once the container is running, use `docker exec` to run CLI commands against it:
+
+```shell
+docker exec forest forest-cli net peers
+```
+
+Sample output:
+
+```console
+12D3KooWAh4qiT3ZRZgctVJ8AWwRva9AncjMRVBSkFwNjTx3EpEr, [/ip4/10.0.2.215/tcp/1347, /ip4/52.12.185.166/tcp/1347]
+12D3KooWMY4VdMsdbFwkHv9HxX2jZsUdCcWFX5F5VGzBPZkdxyVr, [/ip4/162.219.87.149/tcp/30141, ...]
+12D3KooWFWUqE9jgXvcKHWieYs9nhyp6NF4ftwLGAHm4sCv73jjK, [/dns4/bootstrap-3.calibration.fildev.network/tcp/1347]
+```
+
+## Persistent data with volumes
+
+By default, container data is lost when the container is removed. Mount a volume to persist the chain database across restarts and image updates:
+
+<Steps>
+  <Step title="Create a named volume">
+    ```shell
+    docker volume create forest-data
+    ```
+  </Step>
+
+  <Step title="Mount it when starting the container">
+    ```shell
+    docker run --init -it --rm \
+      --ulimit nofile=8192 \
+      --volume forest-data:/root/.local/share/forest \
+      --name forest \
+      ghcr.io/chainsafe/forest:latest \
+      --chain calibnet --auto-download-snapshot
+    ```
+
+    The volume is mounted at `/root/.local/share/forest`, which is Forest's default data directory inside the container.
+  </Step>
+</Steps>
+
+<Tip>
+On Linux, lowering the swappiness kernel parameter improves performance for long-running nodes:
+
+```shell
+sudo sysctl -w vm.swappiness=1
+```
+</Tip>
+
+## Port mapping
+
+Expose Forest's network ports to the host as needed:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| `2345` | TCP | JSON-RPC API |
+| `6116` | TCP | Prometheus metrics |
+| `2346` | TCP | Health check endpoints |
+| `12345` | TCP/UDP | P2P networking (libp2p) |
+
+Example with all ports exposed:
+
+```shell
+docker run --init -d \
+  --name forest \
+  -p 2345:2345 \
+  -p 6116:6116 \
+  -p 2346:2346 \
+  -p 12345:12345 \
+  --volume forest-data:/root/.local/share/forest \
+  ghcr.io/chainsafe/forest:latest \
+  --chain calibnet --auto-download-snapshot
+```
+
+<Warning>
+Do not expose the metrics (`6116`) or health check (`2346`) ports to the public internet. They are unauthenticated and can leak internal node state.
+</Warning>
+
+## Environment variables
+
+Pass environment variables with `--env`:
+
+```shell
+docker run --init -it --rm \
+  --name forest \
+  --env RUST_LOG=info,forest_filecoin=debug \
+  --env FOREST_KEYSTORE_PHRASE=mysecretphrase \
+  ghcr.io/chainsafe/forest:latest \
+  --chain calibnet --auto-download-snapshot
+```
+
+Common variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `RUST_LOG` | Log level, e.g., `info` or `debug` |
+| `FOREST_KEYSTORE_PHRASE` | Passphrase for the encrypted keystore (headless mode) |
+| `FULLNODE_API_INFO` | RPC endpoint and auth token for CLI tools |
+
+## Docker Compose
+
+A production-ready Compose file with Prometheus and Grafana is included in the repository at [`monitored-stack/`](https://github.com/ChainSafe/forest/tree/main/monitored-stack). For a minimal setup:
+
+```yaml
+services:
+  forest:
+    image: ghcr.io/chainsafe/forest:latest
+    init: true
+    restart: unless-stopped
+    command:
+      - --chain
+      - calibnet
+      - --auto-download-snapshot
+      - --rpc-address
+      - 0.0.0.0:2345
+    ports:
+      - "2345:2345"
+      - "12345:12345"
+    volumes:
+      - forest-data:/root/.local/share/forest
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+
+volumes:
+  forest-data:
+```
+
+## Exporting a snapshot from a running container
+
+```shell
+# Trigger the export
+docker exec forest forest-cli --chain calibnet snapshot export
+```
+
+Sample output:
+
+```console
+Export completed. Snapshot located at forest_snapshot_calibnet_2023-02-17_height_308891.car
+```
+
+Copy the file to the host:
+
+```shell
+docker cp forest:/home/forest/forest_snapshot_calibnet_2023-02-17_height_308891.car .
+```
+
+## Keeping the image up to date
+
+[Watchtower](https://github.com/containrrr/watchtower) can automatically pull new Forest images and restart the container:
+
+```shell
+docker run -d \
+  --name watchtower \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  containrrr/watchtower forest
+```
+
+<Note>
+If the GitHub Container Registry rate-limits your pulls, authenticate with a personal access token:
+
+```shell
+echo $GITHUB_TOKEN | docker login ghcr.io -u $GITHUB_USERNAME --password-stdin
+```
+</Note>

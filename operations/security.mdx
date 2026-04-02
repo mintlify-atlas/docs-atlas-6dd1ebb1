@@ -1,0 +1,288 @@
+---
+title: Security
+description: Secure your Forest node with keystore encryption, JWT authentication, RPC access controls, and process isolation best practices.
+---
+
+This page covers the security model of a Forest node: how credentials are stored and protected, how API access is authorized, and recommended practices for production deployments.
+
+## Keystore encryption
+
+Forest stores the JWT private key and wallet keys in a keystore file on disk. By default, this file is encrypted.
+
+| Location | Path |
+|----------|------|
+| Encrypted keystore | `$HOME/.local/share/forest/keystore` |
+| Unencrypted keystore | `$HOME/.local/share/forest/keystore.json` |
+
+### Headless mode
+
+In automated or headless environments, provide the keystore passphrase via the `FOREST_KEYSTORE_PHRASE` environment variable:
+
+```bash
+FOREST_KEYSTORE_PHRASE="my-secure-passphrase" forest --chain mainnet
+```
+
+Forest reads this variable at startup and uses it to decrypt the keystore without prompting for input.
+
+### Disabling encryption (not recommended)
+
+You can disable keystore encryption with the `--encrypt-keystore` flag. This is only suitable for development or throwaway environments:
+
+```bash
+forest --chain calibnet --encrypt-keystore=false
+```
+
+<Warning>
+Never disable keystore encryption in production. The unencrypted `keystore.json` file contains the private key used to sign admin JWT tokens. If this file is read by an attacker, they can generate tokens that grant full control of your node.
+</Warning>
+
+---
+
+## JWT authentication
+
+Forest uses [JSON Web Tokens (JWTs)](https://jwt.io/introduction/) for RPC authorization, using the same security model as [Lotus](https://github.com/filecoin-project/lotus).
+
+### Admin token at startup
+
+When the daemon starts, it generates a JWT private key and prints an **admin token** to stdout:
+
+```
+2024-08-21T11:26:37.611185Z  INFO forest::daemon: Admin token: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+```
+
+<Note>
+The token is only printed once per startup. If you lose it, restart the node to generate a new one.
+</Note>
+
+To save the token to a file automatically, use `--save-token`:
+
+```bash
+forest --chain calibnet --encrypt-keystore=false \
+  --save-token /tmp/token \
+  --exit-after-init 2>&1 > /dev/null && cat /tmp/token
+```
+
+Tokens have a default expiration of 100 years, so there is no need to rotate them under normal circumstances.
+
+### JWT permission levels
+
+Tokens carry a permission scope that controls which RPC methods they can call. Permissions are hierarchical:
+
+| Scope | Access |
+|-------|--------|
+| `read` | Read-only methods that do not modify node state (e.g., `Filecoin.EthGasPrice`) |
+| `write` | All `read` methods plus methods that modify state (e.g., `Filecoin.NetConnect`) |
+| `sign` | All `write` methods plus signing operations (e.g., `Filecoin.WalletSignMessage`) |
+| `admin` | All methods, including `Filecoin.Shutdown` and token creation |
+
+### Creating tokens with limited permissions
+
+Use `forest-cli auth create-token` to create tokens with restricted permissions:
+
+<Steps>
+  <Step title="Start the node and obtain the admin token">
+    ```bash
+    forest --chain mainnet --save-token /tmp/admin-token
+    ```
+  </Step>
+  <Step title="Create a read-only token">
+    ```bash
+    forest-cli --token $(cat /tmp/admin-token) auth create-token --perm read
+    ```
+  </Step>
+  <Step title="Create a write token">
+    ```bash
+    forest-cli --token $(cat /tmp/admin-token) auth create-token --perm write
+    ```
+  </Step>
+  <Step title="Verify a token">
+    Use the `Filecoin.AuthVerify` JSON-RPC method to verify a token:
+    ```bash
+    curl --silent -X POST \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $(cat /tmp/admin-token)" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"Filecoin.AuthVerify","params":["<TOKEN_TO_CHECK>"]}' \
+      "http://127.0.0.1:2345/rpc/v0"
+    ```
+  </Step>
+</Steps>
+
+### Using tokens
+
+<Tabs>
+  <Tab title="forest-cli --token flag">
+    ```bash
+    forest-cli --token $(cat /tmp/admin-token) shutdown
+    ```
+  </Tab>
+  <Tab title="FULLNODE_API_INFO env var">
+    ```bash
+    FULLNODE_API_INFO="$(cat /tmp/admin-token):/ip4/127.0.0.1/tcp/2345/http" \
+      forest-cli info show
+    ```
+  </Tab>
+  <Tab title="HTTP Authorization header">
+    ```bash
+    curl --silent -X POST \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $(cat /tmp/admin-token)" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"Filecoin.ChainHead","param":"null"}' \
+      "http://127.0.0.1:2345/rpc/v0"
+    ```
+
+    <Note>
+      The `Bearer` prefix in the `Authorization` header is optional in Forest but required when calling Lotus-compatible endpoints.
+    </Note>
+  </Tab>
+</Tabs>
+
+<Warning>
+Keep your admin token secure. Anyone with access to it can control your node, including shutting it down or draining wallets it manages. Never commit tokens to version control or pass them in command-line arguments that appear in process listings.
+</Warning>
+
+---
+
+## Offline / sandboxed mode
+
+Forest provides an offline server mode via `forest-tool api serve`. This starts an RPC server backed by a snapshot file instead of a live P2P network. It is useful for:
+
+- Querying archive state without syncing
+- Testing without network connectivity
+- Isolated or air-gapped environments
+
+### Basic usage
+
+```bash
+forest-tool api serve --help
+```
+
+<CodeGroup>
+  ```bash Auto-download latest calibnet snapshot
+  forest-tool api serve --chain calibnet --auto-download-snapshot
+  ```
+
+  ```bash Serve a local snapshot file
+  forest-tool api serve ~/Downloads/forest_snapshot_calibnet_2024-08-08_height_1859736.forest.car.zst
+  ```
+
+  ```bash Devnet with custom genesis
+  forest-tool api serve \
+    --chain localnet-55c7758d-c91a-41eb-94a2-718cb4601bc5 \
+    --genesis /lotus_data/devgen.car
+  ```
+</CodeGroup>
+
+The offline server listens on port `2345` by default (configurable with `--port`) and exposes the same RPC API as a live node. The chain is frozen at the snapshot's height.
+
+### Querying the offline server
+
+```bash
+curl --silent -X POST \
+  -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","id":2,"method":"Filecoin.ChainHead","param":"null"}' \
+  "http://127.0.0.1:2345/rpc/v0" | jq
+```
+
+No authentication token is required for the offline server's read-only queries by default.
+
+<Note>
+The offline server cannot append new blocks to the chain. It serves as a static view of the chain at the snapshot height.
+</Note>
+
+---
+
+## Production security practices
+
+### Use a dedicated system user
+
+Run Forest under a dedicated non-privileged system account. This limits the blast radius if the process is compromised:
+
+```bash
+# Create a dedicated user
+sudo useradd --system --shell /bin/false --home /var/lib/forest forest
+
+# Set ownership of the data directory
+sudo chown -R forest:forest /var/lib/forest
+
+# Run as that user
+sudo -u forest forest --chain mainnet --config /etc/forest/config.toml
+```
+
+### Bind RPC to localhost only
+
+Unless you are intentionally exposing the RPC to external clients, bind it to `127.0.0.1`:
+
+```bash
+forest --rpc-address 127.0.0.1:2345
+```
+
+<Warning>
+Binding the RPC to `0.0.0.0` on an internet-facing host exposes all RPC methods to anyone who can reach the port, including `Filecoin.Shutdown`. Use a reverse proxy with TLS and IP allowlisting if external access is required.
+</Warning>
+
+### Use systemd for process isolation
+
+A minimal systemd unit file for Forest with process isolation:
+
+```ini
+[Unit]
+Description=Forest Filecoin Node
+After=network.target
+
+[Service]
+User=forest
+Group=forest
+ExecStart=/usr/local/bin/forest --chain mainnet --config /etc/forest/config.toml
+Environment=FOREST_KEYSTORE_PHRASE=<passphrase>
+Restart=on-failure
+RestartSec=10
+
+# Process isolation
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/forest
+
+[Install]
+WantedBy=multi-user.target
+```
+
+<Tip>
+Store `FOREST_KEYSTORE_PHRASE` in a systemd drop-in credential file or a secrets manager rather than directly in the unit file. The unit file may be readable by unprivileged users via `systemctl cat`.
+</Tip>
+
+### Encrypt the keystore in production
+
+Always use keystore encryption (the default). Only disable it temporarily for development:
+
+```bash
+# Good: encryption is on by default
+forest --chain mainnet
+
+# Bad: do not use in production
+forest --chain mainnet --encrypt-keystore=false
+```
+
+### Summary checklist
+
+| Practice | Recommendation |
+|----------|----------------|
+| Keystore encryption | Always enabled in production |
+| RPC bind address | `127.0.0.1` unless public access is intentional |
+| Admin token | Stored securely, never committed to version control |
+| Process user | Dedicated non-privileged system account |
+| Process manager | systemd with `NoNewPrivileges`, `PrivateTmp` |
+| JWT expiry validation | Keep enabled (default); only disable in tightly controlled load-balancing setups |
+
+---
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" href="/operations/environment-variables">
+    FOREST_KEYSTORE_PHRASE, FOREST_JWT_DISABLE_EXP_VALIDATION, and other security-relevant variables.
+  </Card>
+  <Card title="Configuration" href="/operations/configuration">
+    RPC address binding and configuration file priority order.
+  </Card>
+</CardGroup>

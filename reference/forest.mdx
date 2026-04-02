@@ -1,0 +1,153 @@
+---
+title: forest
+description: CLI reference for the Forest Filecoin daemon binary. Covers all flags for networking, RPC, logging, sync, and snapshot management.
+---
+
+The `forest` binary starts the Filecoin node daemon. It connects to the P2P network, syncs the blockchain, serves the JSON-RPC API, and manages the local keystore.
+
+```bash
+forest [OPTIONS]
+```
+
+## Configuration sources
+
+Forest resolves its configuration in the following priority order (highest to lowest):
+
+1. `--config <PATH>` flag
+2. `FOREST_CONFIG_PATH` environment variable
+3. `XDG_CONFIG_HOME` default location
+4. Built-in defaults
+
+## Usage examples
+
+<CodeGroup>
+
+```bash Mainnet (import snapshot)
+forest --import-snapshot /path/to/snapshot.car
+```
+
+```bash Calibnet with auto-download
+forest --chain calibnet --auto-download-snapshot
+```
+
+```bash Custom config file
+forest --config /etc/forest/config.toml
+```
+
+```bash With Loki telemetry
+forest --loki --loki-endpoint http://loki.example.com:3100
+```
+
+```bash Save admin token to file
+forest --chain calibnet --auto-download-snapshot --save-token /tmp/forest-token
+```
+
+```bash Validate snapshot without running
+forest --import-snapshot snapshot.car --halt-after-import
+```
+
+```bash Dry-run to check config
+forest --config /etc/forest/config.toml --dry-run
+```
+
+</CodeGroup>
+
+## Flags
+
+<AccordionGroup>
+
+<Accordion title="Network and P2P">
+
+| Flag | Description |
+|------|-------------|
+| `--chain <CHAIN>` | Choose network chain to sync to (e.g. `mainnet`, `calibnet`) |
+| `--p2p-listen-address <ADDR>` | P2P listen addresses. Can be repeated: `--p2p-listen-address /ip4/0.0.0.0/tcp/12345 --p2p-listen-address /ip4/0.0.0.0/tcp/12346` |
+| `--target-peer-count <N>` | Number of peers to maintain connections to (default: 75) |
+| `--kademlia <true\|false>` | Enable or disable Kademlia DHT peer discovery (default: true) |
+| `--mdns <true\|false>` | Enable or disable mDNS local peer discovery (default: false) |
+| `--req-window <N>` | Number of tipsets requested per chain exchange (default: 8) |
+| `--tipset-sample-size <N>` | Number of tipsets used to determine the network head (default: 5) |
+| `--stateless` | Connect to P2P network but do not sync to HEAD |
+
+</Accordion>
+
+<Accordion title="RPC">
+
+| Flag | Description |
+|------|-------------|
+| `--rpc <true\|false>` | Enable or disable the RPC server (default: true) |
+| `--rpc-address <ADDR>` | Address for the RPC server (default: `localhost:2345`) |
+| `--rpc-filter-list <PATH>` | Path to a file listing RPC methods to allow or disallow |
+| `--save-token <PATH>` | Write the admin JWT token to the specified file after startup |
+
+</Accordion>
+
+<Accordion title="Metrics and healthcheck">
+
+| Flag | Description |
+|------|-------------|
+| `--no-metrics` | Disable the Prometheus metrics endpoint |
+| `--metrics-address <ADDR>` | Address for the metrics server (default: `localhost:6116`) |
+| `--no-healthcheck` | Disable healthcheck endpoints |
+| `--healthcheck-address <ADDR>` | Address for the healthcheck server (default: `localhost:2346`) |
+
+</Accordion>
+
+<Accordion title="Logging and telemetry">
+
+| Flag | Description |
+|------|-------------|
+| `--color <auto\|always\|never>` | Colored logging in stdout (default: auto) |
+| `--log-dir <DIR>` | Directory for rolling log files |
+| `--loki` | Send telemetry to Grafana Loki |
+| `--loki-endpoint <URL>` | Grafana Loki endpoint (default: `http://127.0.0.1:3100`) |
+| `--tokio-console` | Enable tokio-console support for async debugging |
+
+</Accordion>
+
+<Accordion title="Snapshot and sync">
+
+| Flag | Description |
+|------|-------------|
+| `--auto-download-snapshot` | Automatically download a chain-specific snapshot if needed |
+| `--import-snapshot <PATH\|URL>` | Import a snapshot from a local CAR file or URL |
+| `--import-mode <MODE>` | Snapshot import mode: `auto`, `copy`, `move`, `symlink`, `hardlink` (default: auto) |
+| `--halt-after-import` | Exit with code 0 after successfully importing a snapshot |
+| `--skip-load <true\|false>` | Skip loading the CAR file; use the header to index the chain (assumes pre-loaded database) |
+| `--height <EPOCH>` | Validate snapshot at the given epoch. Use a negative value `-N` to validate the last N epochs from HEAD |
+| `--head <EPOCH>` | Set the HEAD epoch for validation upper bound (only valid with `--height`) |
+
+</Accordion>
+
+<Accordion title="Database and keystore">
+
+| Flag | Description |
+|------|-------------|
+| `--encrypt-keystore <true\|false>` | Encrypt the keystore (default: true) |
+| `--no-gc` | Disable automatic database garbage collection |
+
+<Note>
+To run Forest non-interactively with an encrypted keystore (e.g. in CI or containers), set the `FOREST_KEYSTORE_PHRASE` environment variable.
+</Note>
+
+</Accordion>
+
+<Accordion title="Configuration and lifecycle">
+
+| Flag | Description |
+|------|-------------|
+| `--config <PATH>` | TOML configuration file |
+| `--genesis <PATH>` | Genesis CAR file |
+| `--dry-run` | Validate command-line options and configuration without starting the daemon |
+| `--exit-after-init` | Exit after basic daemon initialization completes |
+| `--skip-load-actors` | Skip loading actors from the actors bundle |
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+</Accordion>
+
+</AccordionGroup>
+
+<Tip>
+Use `--dry-run` to validate your configuration file and command-line flags before starting the node. This catches misconfigured options without connecting to the network.
+</Tip>

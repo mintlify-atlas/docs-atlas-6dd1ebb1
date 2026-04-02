@@ -1,0 +1,534 @@
+---
+title: forest-tool
+description: CLI reference for forest-tool, a collection of offline utilities for managing snapshots, CAR files, archives, databases, backups, and API testing.
+---
+
+`forest-tool` is a collection of offline utilities for working with Forest data. It does not require a running daemon for most commands.
+
+```bash
+forest-tool <COMMAND>
+```
+
+## Subcommands overview
+
+| Subcommand | Description |
+|------------|-------------|
+| `snapshot` | Fetch, validate, compress, and compute state from snapshots |
+| `archive` | Inspect, export, merge, and diff archive files |
+| `car` | Validate and concatenate CAR files |
+| `db` | Database stats, destruction, and import |
+| `api` | Offline RPC server and API comparison tooling |
+| `backup` | Create and restore node backups |
+| `benchmark` | Benchmark Forest subsystems |
+| `state-migration` | Generate actor bundles and metadata for state migrations |
+| `index` | Backfill the Ethereum index |
+| `net` | Network utilities (ping) |
+| `shed` | Developer utilities (semver-exempt) |
+| `fetch-params` | Download proof parameters |
+| `completion` | Generate shell completion scripts |
+
+---
+
+<AccordionGroup>
+
+<Accordion title="snapshot — Snapshot management">
+
+```bash
+forest-tool snapshot <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `fetch` | Download the most recent snapshot from a trusted source |
+| `validate` | Validate snapshots individually |
+| `validate-diffs` | Validate a set of snapshots as a whole (diff set) |
+| `compress` | Convert a snapshot to compressed `.forest.car.zst` format |
+| `compute-state` | Compute and print the state hash at a given epoch |
+
+**`fetch` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-d, --directory <DIR>` | Download destination (default: `.`) |
+| `--chain <CHAIN>` | Network chain (default: `mainnet`) |
+| `-v, --vendor <VENDOR>` | Vendor to fetch from (default: `forest`) |
+
+**`validate` / `validate-diffs` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--check-links <N>` | Number of recent epochs to check for broken links (default: 2000) |
+| `--check-network <CHAIN>` | Assert the snapshot belongs to this network |
+| `--check-stateroots <N>` | Number of recent epochs to scan for bad transactions (default: 60) |
+| `--fail-fast` | Stop at the first invalid snapshot (`validate` only) |
+
+**`compress` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output-path <PATH>` | Output `.forest.car.zst` file or directory (default: `.`) |
+| `--compression-level <N>` | Zstd compression level (default: 3) |
+| `--frame-size <N>` | Maximum zstd frame size in bytes (default: 8192) |
+| `--force` | Overwrite the output file without prompting |
+
+**`compute-state` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--epoch <EPOCH>` | Epoch to compute state at (required) |
+| `--json` | Output detailed message execution as JSON |
+
+**Examples:**
+
+```bash
+# Fetch the latest calibnet snapshot
+forest-tool snapshot fetch --chain calibnet --directory /snapshots
+
+# Validate a snapshot
+forest-tool snapshot validate snapshot.car.zst
+
+# Validate checking only the last 500 epochs
+forest-tool snapshot validate --check-links 500 --check-stateroots 30 snapshot.car.zst
+
+# Compress a plain CAR to forest format
+forest-tool snapshot compress --output-path /snapshots snapshot.car
+
+# Compute state hash at epoch 1000000
+forest-tool snapshot compute-state --epoch 1000000 snapshot.car.zst
+
+# Compute state with full message execution output
+forest-tool snapshot compute-state --epoch 1000000 --json snapshot.car.zst
+```
+
+</Accordion>
+
+<Accordion title="archive — Archive management">
+
+```bash
+forest-tool archive <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `info <SNAPSHOT>` | Show basic information about an archive |
+| `metadata <SNAPSHOT>` | Show FRC-0108 metadata for a Filecoin snapshot archive |
+| `f3-header <SNAPSHOT>` | Show the FRC-0108 header of a standalone F3 snapshot |
+| `export [OPTIONS] <SNAPSHOT_FILES>...` | Trim and re-export a snapshot |
+| `checkpoints <SNAPSHOT_FILES>...` | Print block headers at 30-day intervals |
+| `merge [OPTIONS] <SNAPSHOT_FILES>...` | Merge multiple snapshots into one |
+| `merge-f3 --v1 <V1> --f3 <F3> --output <OUTPUT>` | Merge a v1 Filecoin snapshot with an F3 snapshot into a v2 snapshot |
+| `diff --epoch <N> <SNAPSHOT_FILES>...` | Show the difference between canonical and computed state for a tipset |
+| `sync-bucket [OPTIONS] <SNAPSHOT_FILES>...` | Export and upload lite/diff snapshots to an S3 bucket |
+
+**`export` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output-path <PATH>` | Output file or directory (default: `.`) |
+| `-e, --epoch <N>` | Upper bound epoch for export |
+| `-d, --depth <N>` | Number of state roots to include (default: 2000) |
+| `--diff <EPOCH>` | Exclude values reachable from this epoch |
+| `--diff-depth <N>` | Number of state roots to include in the diff set |
+| `--force` | Overwrite output without prompting |
+
+**Examples:**
+
+```bash
+# Inspect an archive
+forest-tool archive info snapshot.car.zst
+
+# Show FRC-0108 metadata
+forest-tool archive metadata snapshot.car.zst
+
+# Export a trimmed snapshot at epoch 2000000
+forest-tool archive export --epoch 2000000 --depth 900 --output-path trimmed.car.zst snapshot.car.zst
+
+# Merge two snapshots
+forest-tool archive merge --output-path merged.forest.car.zst snapshot1.car.zst snapshot2.car.zst
+
+# Merge a v1 snapshot with an F3 snapshot into v2
+forest-tool archive merge-f3 --v1 snapshot-v1.car.zst --f3 snapshot-f3.car.zst --output snapshot-v2.forest.car.zst
+
+# Show canonical vs computed state diff at epoch 1000000
+forest-tool archive diff --epoch 1000000 snapshot.car.zst
+```
+
+</Accordion>
+
+<Accordion title="car — CAR file utilities">
+
+```bash
+forest-tool car <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `validate [OPTIONS] <CAR_FILE>` | Check the validity of a CAR archive |
+| `concat --output <OUTPUT> [CAR_FILES]...` | Concatenate multiple CAR files into one |
+
+**`validate` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--ignore-block-validity` | Skip verifying block hashes |
+| `--ignore-forest-index` | Skip verifying the on-disk index integrity |
+
+Supported formats: `.car`, `.car.zst`, `.forest.car.zst`
+
+**Examples:**
+
+```bash
+# Validate a CAR file
+forest-tool car validate snapshot.car.zst
+
+# Validate without checking block hashes
+forest-tool car validate --ignore-block-validity snapshot.forest.car.zst
+
+# Concatenate two CAR files
+forest-tool car concat --output combined.forest.car.zst part1.car.zst part2.car.zst
+```
+
+</Accordion>
+
+<Accordion title="db — Database management">
+
+```bash
+forest-tool db <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `stats [-c <CONFIG>] [--chain <CHAIN>]` | Show database statistics |
+| `destroy [--force] [-c <CONFIG>] [--chain <CHAIN>]` | Delete the database |
+| `import --chain <CHAIN> [--db <DB>] [--skip-validation] <SNAPSHOT_FILES>...` | Import CAR files into the key-value store |
+
+**Examples:**
+
+```bash
+# Show database stats
+forest-tool db stats --chain calibnet
+
+# Destroy the calibnet database (prompts for confirmation)
+forest-tool db destroy --chain calibnet
+
+# Import a snapshot into the database
+forest-tool db import --chain calibnet snapshot.car.zst
+```
+
+</Accordion>
+
+<Accordion title="api — API tooling">
+
+```bash
+forest-tool api <COMMAND>
+```
+
+Useful for development, testing, and API compatibility verification.
+
+| Subcommand | Description |
+|------------|-------------|
+| `serve [OPTIONS] [SNAPSHOT_FILES]...` | Start an offline RPC server from snapshot files |
+| `compare [OPTIONS] [SNAPSHOT_FILES]...` | Compare two RPC providers (Forest vs Lotus) |
+| `dump-tests --path <PATH> [OPTIONS]` | Dump RPC test cases for an API path |
+| `generate-test-snapshot --chain <CHAIN> --out-dir <DIR> <TEST_DUMP_FILES>...` | Generate RPC test snapshots from dump files |
+| `test <FILES>...` | Run RPC tests using pre-generated test snapshots |
+| `test-stateful` | Run stateful JSON-RPC API tests against a live node |
+
+**`serve` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--chain <CHAIN>` | Filecoin network chain |
+| `--port <PORT>` | RPC server port (default: 2345) |
+| `--auto-download-snapshot` | Auto-download a snapshot if none provided |
+| `--height <N>` | Validate snapshot at this epoch (default: -50) |
+| `--save-token <PATH>` | Write the admin token to a file |
+
+**`compare` key flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--forest <ADDR>` | Forest node address (default: `/ip4/127.0.0.1/tcp/2345/http`) |
+| `--lotus <ADDR>` | Lotus node address (default: `/ip4/127.0.0.1/tcp/1234/http`) |
+| `--filter <NAME>` | Filter tests by method name |
+| `--fail-fast` | Cancel on the first failure |
+| `--offline` | Nodes are offline/out of sync |
+| `-n, --n-tipsets <N>` | Tipsets to use for test generation (default: 10) |
+| `--report-mode <full\|failure-only\|summary>` | Report detail level (default: full) |
+
+**Examples:**
+
+```bash
+# Start an offline RPC server for testing
+forest-tool api serve --chain calibnet snapshot.car.zst
+
+# Compare Forest vs Lotus for all methods
+forest-tool api compare snapshot.car.zst
+
+# Compare only specific methods
+forest-tool api compare --filter Filecoin.ChainGetBlock snapshot.car.zst
+
+# Dump test cases for the v1 API
+forest-tool api dump-tests --path v1 snapshot.car.zst
+
+# Run pre-generated RPC tests
+forest-tool api test tests/*.car.zst
+```
+
+</Accordion>
+
+<Accordion title="backup — Node backup and restore">
+
+```bash
+forest-tool backup <COMMAND>
+```
+
+<Note>
+The node must be **offline** for both backup and restore operations.
+</Note>
+
+| Subcommand | Description |
+|------------|-------------|
+| `create [OPTIONS]` | Create a backup of the node (key pair and keystore by default) |
+| `restore [OPTIONS] <BACKUP_FILE>` | Restore a backup from a file |
+
+**`create` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--backup-file <PATH>` | Custom output path for the backup file |
+| `--all` | Backup everything in the Forest data directory |
+| `--no-keypair` | Exclude the P2P key pair |
+| `--no-keystore` | Exclude the keystore |
+| `--backup-chain <CHAIN>` | Include the blockstore for the given chain |
+| `--include-proof-params` | Include proof parameters in the backup |
+| `-d, --daemon-config <PATH>` | TOML config file for locating data directories |
+
+**`restore` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Overwrite existing files without prompting |
+| `-d, --daemon-config <PATH>` | TOML config file for locating data directories |
+
+**Examples:**
+
+```bash
+# Create a default backup (keypair + keystore)
+forest-tool backup create --backup-file node-backup.tar.zst
+
+# Backup everything including the calibnet chain
+forest-tool backup create --all --backup-chain calibnet
+
+# Restore from backup
+forest-tool backup restore node-backup.tar.zst
+
+# Restore, overwriting existing files
+forest-tool backup restore --force node-backup.tar.zst
+```
+
+</Accordion>
+
+<Accordion title="benchmark — Performance benchmarks">
+
+```bash
+forest-tool benchmark <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `car-streaming <SNAPSHOT_FILES>...` | Benchmark streaming data from a CAR archive |
+| `graph-traversal <SNAPSHOT_FILES>...` | Depth-first traversal of the Filecoin graph |
+| `forest-encoding [OPTIONS] <SNAPSHOT_FILE>` | Benchmark encoding a `.forest.car.zst` file |
+| `export [OPTIONS] <SNAPSHOT_FILES>...` | Benchmark exporting a `.forest.car.zst` from HEAD |
+| `blockstore` | Benchmark the key-value blockstore |
+
+**Examples:**
+
+```bash
+# Benchmark CAR streaming
+forest-tool benchmark car-streaming snapshot.car.zst
+
+# Benchmark graph traversal
+forest-tool benchmark graph-traversal snapshot.car.zst
+
+# Benchmark forest encoding with a custom compression level
+forest-tool benchmark forest-encoding --compression-level 6 snapshot.car.zst
+
+# Benchmark export at a specific depth
+forest-tool benchmark export --depth 900 snapshot.car.zst
+```
+
+</Accordion>
+
+<Accordion title="state-migration — State migration tools">
+
+```bash
+forest-tool state-migration <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `actor-bundle [OUTPUT]` | Generate a merged actor bundle from Forest's hard-coded sources |
+| `generate-actors-metadata` | Generate actor metadata from the required bundles list |
+
+**Examples:**
+
+```bash
+# Generate actor bundle to default output
+forest-tool state-migration actor-bundle
+
+# Generate to a custom path
+forest-tool state-migration actor-bundle /tmp/actor_bundles.car.zst
+```
+
+</Accordion>
+
+<Accordion title="index — Index database management">
+
+```bash
+forest-tool index <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `backfill [OPTIONS]` | Backfill the index with Ethereum mappings, events, etc. |
+
+**`backfill` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-c, --config <PATH>` | TOML config file |
+| `--chain <CHAIN>` | Override chain from config |
+| `--from <EPOCH>` | Start epoch (default: chain head) |
+| `--to <EPOCH>` | End epoch (inclusive) |
+| `--n-tipsets <N>` | Number of tipsets to backfill |
+
+**Example:**
+
+```bash
+# Backfill the last 1000 tipsets on calibnet
+forest-tool index backfill --chain calibnet --n-tipsets 1000
+```
+
+</Accordion>
+
+<Accordion title="net — Network utilities">
+
+```bash
+forest-tool net ping [OPTIONS] <PEER>
+```
+
+Pings a peer by its multiaddress to measure latency.
+
+| Flag | Description |
+|------|-------------|
+| `-c, --count <N>` | Number of pings (default: 5) |
+| `-i, --interval <SECS>` | Minimum seconds between pings (default: 1) |
+
+**Example:**
+
+```bash
+forest-tool net ping -c 10 /ip4/1.2.3.4/tcp/1347/p2p/12D3KooW...
+```
+
+</Accordion>
+
+<Accordion title="shed — Developer utilities">
+
+```bash
+forest-tool shed <COMMAND>
+```
+
+<Warning>
+Commands in `shed` are semver-exempt and may change or be removed without notice.
+</Warning>
+
+| Subcommand | Description |
+|------------|-------------|
+| `summarize-tipsets --ancestors <N> [--height <N>]` | Enumerate tipset CIDs for a span of epochs |
+| `peer-id-from-key-pair <KEYPAIR>` | Derive a peer ID from a key-pair file |
+| `private-key-from-key-pair <KEYPAIR>` | Extract a Lotus-compatible base64 private key from a Forest key-pair file |
+| `key-pair-from-private-key <KEY>` | Convert a Lotus private key into a Forest key-pair file |
+| `openrpc --path <v0\|v1\|v2> [--omit <FIELDS>]` | Dump the OpenRPC definition for the node |
+| `migrate-state` | Run a network upgrade state migration |
+
+**Examples:**
+
+```bash
+# Summarize the last 100 tipsets
+forest-tool shed summarize-tipsets --ancestors 100
+
+# Get peer ID from the default key-pair file
+forest-tool shed peer-id-from-key-pair /var/lib/forest/keypair
+
+# Convert Forest key-pair to Lotus-compatible private key
+forest-tool shed private-key-from-key-pair /var/lib/forest/keypair
+
+# Dump the v1 OpenRPC definition
+forest-tool shed openrpc --path v1
+
+# Dump v1 OpenRPC without descriptions
+forest-tool shed openrpc --path v1 --omit description
+```
+
+</Accordion>
+
+<Accordion title="fetch-params — Download proof parameters">
+
+```bash
+forest-tool fetch-params [OPTIONS] [PARAMS_SIZE]
+```
+
+Downloads Filecoin proof parameters for a given sector size.
+
+| Flag | Description |
+|------|-------------|
+| `-a, --all` | Download all proof parameters |
+| `-k, --keys` | Download only verification keys |
+| `-d, --dry-run` | Print download locations without downloading |
+| `-c, --config <PATH>` | Optional TOML config file |
+
+**Examples:**
+
+```bash
+# Download all proof parameters
+forest-tool fetch-params --all
+
+# Download only verification keys
+forest-tool fetch-params --keys
+
+# Dry-run to see what would be downloaded
+forest-tool fetch-params --dry-run --all
+```
+
+</Accordion>
+
+<Accordion title="completion — Shell completions">
+
+```bash
+forest-tool completion [OPTIONS] [BINARIES]...
+```
+
+Generates shell completion scripts for Forest binaries.
+
+| Flag | Description |
+|------|-------------|
+| `--shell <SHELL>` | Target shell: `bash`, `elvish`, `fish`, `powershell`, `zsh` (default: bash) |
+
+**Examples:**
+
+```bash
+# Generate bash completions for all binaries
+forest-tool completion --shell bash
+
+# Generate zsh completions for forest-cli only
+forest-tool completion --shell zsh forest-cli
+
+# Install bash completions
+forest-tool completion --shell bash > /etc/bash_completion.d/forest
+```
+
+</Accordion>
+
+</AccordionGroup>

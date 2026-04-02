@@ -1,0 +1,182 @@
+---
+title: Configuration
+description: Configure Forest using TOML config files, CLI flags, and environment variables. Covers config file format, priority order, and key options for networking, storage, and RPC.
+---
+
+Forest supports configuration via a TOML file, CLI flags, and environment variables. This page covers the config file format, where Forest looks for it, and the key options you can set.
+
+## Configuration priority order
+
+When Forest starts, it resolves configuration from the following sources in order of decreasing priority:
+
+1. `--config <PATH>` CLI flag
+2. `FOREST_CONFIG_PATH` environment variable
+3. System default config directory (`$XDG_CONFIG_HOME` on Linux)
+4. Built-in defaults
+
+<Note>
+If a config file is not found at any of these locations, Forest falls back to its built-in defaults and will run without a config file.
+</Note>
+
+## Config file format
+
+Configuration files use [TOML](https://toml.io/) syntax and are organized into sections. The two primary sections are `[client]` and `[network]`.
+
+```toml
+[client]
+data_dir = "<directory for all chain and networking data>"
+genesis_file = "<relative file path of genesis car file>"
+
+[network]
+listening_multiaddrs = ["<multiaddress>"]
+bootstrap_peers = ["<multiaddress>"]
+```
+
+Pass the config file path at startup:
+
+```bash
+forest --config /path/to/your_config.toml
+```
+
+Or set it via environment variable:
+
+```bash
+export FOREST_CONFIG_PATH=/path/to/your_config.toml
+forest --chain calibnet
+```
+
+## Key configuration options
+
+### `[client]` section
+
+<AccordionGroup>
+  <Accordion title="data_dir">
+    The directory where Forest stores all chain data, the database, keystore, and other state. Defaults to `$HOME/.local/share/forest` on Linux.
+
+    ```toml
+    [client]
+    data_dir = "/var/lib/forest"
+    ```
+  </Accordion>
+
+  <Accordion title="genesis_file">
+    Path to a genesis CAR file. Only required when running a devnet or a custom network that Forest does not have a built-in genesis for.
+
+    ```toml
+    [client]
+    genesis_file = "/path/to/devgen.car"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### `[network]` section
+
+<AccordionGroup>
+  <Accordion title="listening_multiaddrs">
+    The list of multiaddresses Forest listens on for inbound P2P connections. Each entry follows the [multiaddr](https://github.com/multiformats/multiaddr) format.
+
+    ```toml
+    [network]
+    listening_multiaddrs = ["/ip4/0.0.0.0/tcp/1347"]
+    ```
+  </Accordion>
+
+  <Accordion title="bootstrap_peers">
+    A list of multiaddresses for bootstrap peers that Forest connects to when joining the network.
+
+    ```toml
+    [network]
+    bootstrap_peers = [
+      "/ip4/54.186.82.90/tcp/1347/p2p/12D3K1oWKNF7vNFEhnvB45E9mw2B5z6t419W3ziZPLdUDVnLLKGs"
+    ]
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Multiaddress format
+
+Forest uses [multiaddresses](https://github.com/multiformats/multiaddr) for all network addresses — P2P listening addresses, bootstrap peers, and RPC endpoints.
+
+A full multiaddress includes the transport protocol, IP, port, and peer ID:
+
+```
+/ip4/54.186.82.90/tcp/1347/p2p/12D3K1oWKNF7vNFEhnvB45E9mw2B5z6t419W3ziZPLdUDVnLLKGs
+```
+
+For local-only listening (no peer ID required):
+
+```
+/ip4/127.0.0.1/tcp/1347
+/ip4/0.0.0.0/tcp/1347
+```
+
+## Service addresses
+
+RPC, metrics, and healthcheck addresses are configured separately from P2P networking. These are typically set via CLI flags at startup:
+
+<Tabs>
+  <Tab title="RPC">
+    ```bash
+    # Default RPC address: 127.0.0.1:2345
+    forest --rpc-address 127.0.0.1:2345
+    ```
+  </Tab>
+  <Tab title="Metrics">
+    ```bash
+    # Prometheus metrics endpoint
+    forest --metrics-address 127.0.0.1:6116
+    ```
+  </Tab>
+  <Tab title="Healthcheck">
+    ```bash
+    # HTTP healthcheck endpoint
+    forest --healthcheck-address 127.0.0.1:2346
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+Do not bind RPC to `0.0.0.0` on internet-facing servers without additional access controls. Anyone who can reach the RPC port can interact with your node.
+</Warning>
+
+## Validating a config file
+
+Use `--dry-run` to validate configuration without starting the node. Forest will parse the config, report errors, and exit:
+
+```bash
+forest --config /path/to/your_config.toml --dry-run
+```
+
+This is useful in CI pipelines or deployment scripts to verify config changes before a rolling restart.
+
+## Full example config
+
+A complete example for a calibnet node with custom data directory and explicit bootstrap peer:
+
+```toml
+[client]
+data_dir = "/var/lib/forest"
+
+[network]
+listening_multiaddrs = ["/ip4/0.0.0.0/tcp/1347"]
+bootstrap_peers = [
+  "/ip4/54.186.82.90/tcp/1347/p2p/12D3K1oWKNF7vNFEhnvB45E9mw2B5z6t419W3ziZPLdUDVnLLKGs"
+]
+```
+
+Start the node with this config on calibnet:
+
+```bash
+forest --chain calibnet --config /etc/forest/config.toml --auto-download-snapshot
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" href="/operations/environment-variables">
+    Full reference for all environment variables that control Forest behavior.
+  </Card>
+  <Card title="Security" href="/operations/security">
+    Keystore encryption, JWT authentication, and production hardening.
+  </Card>
+</CardGroup>

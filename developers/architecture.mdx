@@ -1,0 +1,267 @@
+---
+title: Architecture
+description: An in-depth look at Forest's core modules, architectural patterns, daemon startup flow, chain synchronization, RPC server, P2P networking, and storage layers.
+---
+
+Forest is structured as a collection of well-defined Rust modules connected through trait boundaries and async message passing. This page describes the major components and the patterns that hold them together.
+
+## Core modules
+
+| Module | Role |
+|---|---|
+| `daemon/` | Node startup, initialization, and service orchestration |
+| `chain/` | Blockchain storage (`ChainStore`) and index management |
+| `chain_sync/` | Chain synchronization and consensus (`ChainFollower`, `ChainMuxer`) |
+| `state_manager/` | State tree management and FVM execution coordinator |
+| `rpc/` | JSON-RPC API server with authentication and filtering middleware |
+| `libp2p/` | P2P networking (peer discovery, chain exchange, gossipsub) |
+| `message_pool/` | Transaction pool for pending messages |
+| `db/` | Database abstraction layer (ParityDb, `MemoryDB`, CAR format) |
+| `interpreter/` | Filecoin Virtual Machine (FVM) integration — multi-version |
+| `blocks/` | Block and tipset data structures |
+| `shim/` | Filecoin protocol primitives (actors, crypto, addresses, state tree) |
+| `eth/` | Ethereum compatibility layer (EVM transactions, address mapping) |
+| `wallet/` | Key management and transaction signing |
+| `networks/` | Network configurations (mainnet, calibnet, devnet, butterflynet) |
+
+## Key architectural patterns
+
+### Blockstore pattern
+
+The generic database trait `fvm_ipld_blockstore::Blockstore` allows storage implementations to be swapped without changing application logic. Most core structures are generic over this trait:
+
+```rust
+pub struct StateManager<DB> where DB: Blockstore { ... }
+pub struct ChainStore<DB> where DB: Blockstore { ... }
+```
+
+This means the same `StateManager` works over an in-memory store during tests, a ParityDb-backed store in production, and a read-only CAR file during snapshot validation.
+
+### Publisher/subscriber for head changes
+
+`HeadChange` events — new tipsets or reorg reverts — are broadcast from `ChainStore` via a `Publisher` to multiple independent subscribers:
+
+- **RPC layer** — notifies `eth_subscribe` and `Filecoin.ChainNotify` clients
+- **Message pool** — removes messages that are now included in a block
+- **Chain indexer** — updates Ethereum address mappings and event indices
+
+### State management with TipsetStateCache
+
+`StateManager` is the central coordinator for all state transitions, actor queries, and FVM execution. It caches computed state roots and message receipts in `TipsetStateCache` to avoid re-executing the same tipsets on repeated queries.
+
+### Multi-version FVM
+
+Forest supports three FVM generations to cover the full history of network versions:
+
+| FVM version | Network versions |
+|---|---|
+| `FVM2` | v1 – v15 |
+| `FVM3` | v16 – v20 |
+| `FVM4` | v21 and above |
+
+WASM execution requires explicit stack size management via `stacker::grow()` to avoid stack overflows on deeply recursive actor code.
+
+---
+
+## Daemon startup flow
+
+The `forest` binary initialises services in a fixed order. Each step must complete before the next begins:
+
+<Steps>
+  <Step title="startup_init()">
+    Increase file descriptor limits and initialise the proof parameter cache.
+  </Step>
+  <Step title="AppContext::init()">
+    Initialise the database, state manager, keystore, and JWT authentication.
+  </Step>
+  <Step title="create_p2p_service()">
+    Start the libp2p networking stack (Kademlia, gossipsub, chain exchange, hello protocol).
+  </Step>
+  <Step title="create_mpool()">
+    Initialise the message pool, which subscribes to head changes to expire included messages.
+  </Step>
+  <Step title="create_chain_follower()">
+    Start chain synchronisation — the `ChainFollower` begins consuming tipsets from the P2P layer.
+  </Step>
+  <Step title="maybe_start_rpc_service()">
+    Start the JSON-RPC server on the configured port (default 2345).
+  </Step>
+  <Step title="maybe_start_metrics_service()">
+    Start the Prometheus metrics endpoint.
+  </Step>
+  <Step title="maybe_start_health_check_service()">
+    Start the health check HTTP service.
+  </Step>
+  <Step title="maybe_start_f3_service()">
+    Optionally start the F3 (Fast Finality) sidecar via FFI.
+  </Step>
+</Steps>
+
+---
+
+## Chain synchronization
+
+`ChainFollower` is the orchestrator of the chain sync process. Its primary goal is to keep the local chain state aligned with the Filecoin network's heaviest tipset.
+
+### Components
+
+- **`ChainFollower`** — top-level orchestrator that spawns four concurrent tasks: forwarding peer tipsets, forwarding miner tipsets, executing state machine tasks, and reporting sync progress
+- **`SyncStateMachine`** — manages the set of candidate tipsets and decides what to do next (`FetchTipset` or `ValidateTipset`)
+- **`ChainMuxer`** — resolves competing forks using the heaviest-chain rule
+- **`TipsetSyncer`** / **`TipsetValidator`** — perform the actual block-by-block validation
+- **`BadBlockCache`** — LRU cache of known-invalid block CIDs that prevents re-fetching
+
+### Sync state machine events
+
+| Event | Triggered when | Effect |
+|---|---|---|
+| `SyncEvent::NewFullTipsets` | A tipset is discovered | Add to the internal `tipsets` map |
+| `SyncEvent::BadTipset` | Validation fails | Add to `BadBlockCache`, prune all descendant tipsets |
+| `SyncEvent::ValidatedTipset` | Validation succeeds | Commit to `ChainStore`, broadcast `HeadChange::Apply` |
+
+### Tipset validation
+
+When a `SyncTask::ValidateTipset` task runs, each block in the tipset is validated in parallel:
+
+1. **Parent state execution** — re-execute all parent tipset messages and compare the resulting state root against the block header's `state_root` field
+2. **Message validation** — verify BLS aggregate signature, secp256k1 individual signatures, message nonces, gas limits, and the `TxMeta` CID
+3. **Block signature verification** — confirm the header was signed by the declared `miner_address`
+4. **Consensus validation** — verify the `ElectionProof` via `FilecoinConsensus::validate_block`
+
+### Committing to the chain
+
+Once a tipset passes validation:
+
+1. `ChainStore::put_tipset` stores the tipset
+2. `expand_tipset` checks `TipsetTracker` for sibling blocks at the same epoch and merges them
+3. `update_heaviest` compares weight against the current head
+4. If heavier, `set_heaviest_tipset` updates the database and broadcasts `HeadChange::Apply`
+
+---
+
+## RPC server architecture
+
+The JSON-RPC server is built as a layered middleware stack. Each layer handles a distinct concern:
+
+```
+Request
+  → AuthLayer          (JWT authentication)
+  → FilterLayer        (method whitelist/blacklist via --rpc-filter-list)
+  → SegregationLayer   (separate read/write connection pools)
+  → SetExtensionLayer  (inject request metadata)
+  → LogLayer           (structured access logging)
+  → MetricsLayer       (Prometheus counters and histograms)
+  → RpcHandler         (dispatch to method implementation)
+```
+
+### RPC namespaces
+
+| Namespace | Description |
+|---|---|
+| `auth::` | JWT token generation and validation |
+| `chain::` | Tipset, block, and message retrieval |
+| `state::` | Actor state queries and FVM execution |
+| `mpool::` | Message pool — pending transactions |
+| `eth::` | Ethereum-compatible RPC methods |
+| `net::` | P2P network status and peer management |
+| `sync::` | Chain sync status |
+| `wallet::` | Key management and signing |
+
+---
+
+## FVM integration
+
+### Version selection
+
+Network version determines which FVM generation is instantiated at runtime. The mapping is defined in the `interpreter/` module and consulted on every state transition.
+
+### VM execution flow
+
+```
+StateManager::call_with_gas()
+  → VM::new(ExecutionContext)
+  → vm.apply_message() / apply_implicit_message()
+  → VM::flush() → new_state_root
+```
+
+CPU-intensive work (VM execution, cryptography) is offloaded to `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+
+### Key FVM concepts
+
+<AccordionGroup>
+  <Accordion title="State Tree">
+    An IPLD-based Merkle tree of actor states, keyed by actor ID. Every tipset has exactly one state root CID that identifies a complete snapshot of all actor states.
+  </Accordion>
+  <Accordion title="Actors">
+    Filecoin's smart contract primitives. The builtin actors include System, Init, Power, Market, Miner, and others. Each has its own state structure and callable methods.
+  </Accordion>
+  <Accordion title="Messages">
+    Transactions that invoke actor methods. Each message specifies the sender, recipient, method number, parameters, gas limit, and fee cap.
+  </Accordion>
+  <Accordion title="Receipts">
+    Execution results attached to each applied message: gas used, exit code, and optional return value.
+  </Accordion>
+  <Accordion title="Randomness">
+    Provided by the Drand beacon via `ChainRand`. Used in leader election and other protocol-level randomness draws.
+  </Accordion>
+  <Accordion title="State Migrations">
+    Automatic one-time state transformations that run at network version boundaries. See the [Network Upgrades](/developers/network-upgrades) page for implementation details.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## P2P networking
+
+Forest uses libp2p with multiple protocols running concurrently:
+
+| Protocol | Purpose |
+|---|---|
+| **Chain Exchange** | Fetch full blocks and messages from peers during sync |
+| **Hello** | Exchange genesis CID and peer chain height on first contact |
+| **Gossipsub** | Broadcast new blocks and messages to the network |
+| **Bitswap** | IPLD block exchange (legacy, for backward compatibility) |
+| **Kademlia DHT** | Peer discovery |
+| **mDNS** | Local network discovery |
+
+The **Peer Manager** tracks peer quality scores based on message validity, manages connection limits, and promotes or demotes peers accordingly.
+
+---
+
+## Database organization
+
+Forest uses a layered storage design:
+
+```
+Application (StateManager, ChainStore)
+  ↓
+IPLD Blockstore (LogicalDB)
+  ↓
+Write Buffer / Read Cache  (optional)
+  ↓
+ParityDb  (embedded key-value store)
+```
+
+In addition to the main IPLD blockstore, Forest maintains several purpose-specific stores:
+
+| Store | Contents |
+|---|---|
+| **Settings Store** | Configuration persistence — chain head, message pool config |
+| **Eth Mappings Store** | ETH ↔ Filecoin f4 (delegated) address mappings |
+| **Indices Store** | Message CID and actor event indices |
+| **CAR DB** | Snapshot import/export (CAR v1 and v2 with F3 data) |
+
+---
+
+## Ethereum compatibility layer
+
+Forest supports the standard Ethereum JSON-RPC surface used by wallets and tooling:
+
+- **Transaction types** — legacy, EIP-155, and EIP-1559
+- **Standard methods** — `eth_call`, `eth_sendRawTransaction`, `eth_getTransactionReceipt`, `eth_subscribe`, and many more
+- **Address mapping** — EVM 20-byte addresses map bijectively to Filecoin f4 (delegated) addresses
+- **Precompiles** — provide Filecoin-specific operations accessible from EVM contracts
+
+<Note>
+  Forest does not implement mining. None of the mining-related RPC methods will be added. Methods specific to Lotus internals (such as `Filecoin.ChainHotGC`) are implemented as no-ops for drop-in compatibility.
+</Note>

@@ -1,0 +1,399 @@
+---
+title: forest-cli
+description: CLI reference for forest-cli, the JSON-RPC client for Forest. Covers all subcommands for chain, auth, net, sync, mpool, state, snapshot, F3, and more.
+---
+
+`forest-cli` is the command-line client for the Forest JSON-RPC API. It communicates with a running `forest` daemon over HTTP.
+
+```bash
+forest-cli [OPTIONS] <COMMAND>
+```
+
+## Authentication
+
+`forest-cli` requires a JWT token to perform privileged operations. You can provide it in two ways:
+
+```bash
+# Via environment variable (recommended)
+export FULLNODE_API_INFO="<token>:/ip4/127.0.0.1/tcp/2345/http"
+
+# Via flag
+forest-cli --token <TOKEN> <COMMAND>
+```
+
+The default connection is `localhost:2345`. Use the `FULLNODE_API_INFO` environment variable to point to a remote node.
+
+<Note>
+The `FULLNODE_API_INFO` format is: `<token>:<multiaddr>`. For example: `eyJ...:/ip4/127.0.0.1/tcp/2345/http`
+</Note>
+
+## Global options
+
+| Flag | Description |
+|------|-------------|
+| `-t, --token <TOKEN>` | JWT token for JSON-RPC authentication |
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+## Subcommands
+
+<AccordionGroup>
+
+<Accordion title="chain — Interact with the blockchain">
+
+```bash
+forest-cli chain <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `block -c <CID>` | Retrieve and print a block by CID |
+| `genesis` | Print the genesis tipset |
+| `head` | Print the canonical chain head |
+| `message -c <CID>` | Read a message by CID from the chain block store |
+| `read-obj -c <CID>` | Read raw IPLD node bytes by CID |
+| `set-head [--epoch <N>] [--force] <CIDS>...` | Manually set the chain head to the given tipset CIDs |
+| `prune snap` | Run snapshot garbage collection |
+| `list [--epoch <N>] [--count <N>] [--gas-stats]` | View a segment of the chain |
+
+**Examples:**
+
+```bash
+# Print current chain head
+forest-cli chain head
+
+# Get a block by CID
+forest-cli chain block -c bafy2bzacedxyz...
+
+# Get a message by CID
+forest-cli chain message -c bafy2bzacedxyz...
+
+# List the last 10 tipsets with gas stats
+forest-cli chain list --count 10 --gas-stats
+
+# Set head to a specific epoch (decrease by 5 from current head)
+forest-cli chain set-head --epoch -5 --force bafy2bzacedxyz...
+```
+
+</Accordion>
+
+<Accordion title="auth — Manage RPC permissions">
+
+```bash
+forest-cli auth <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `create-token --perm <PERM> [--expire-in <DURATION>]` | Create a new JWT token with the given permission |
+| `api-info --perm <PERM> [--expire-in <DURATION>]` | Get RPC API connection info including a token |
+
+Permission levels: `read`, `write`, `sign`, `admin`
+
+**Examples:**
+
+```bash
+# Create a read-only token (expires in 2 months by default)
+forest-cli auth create-token --perm read
+
+# Create an admin token that expires in 1 year
+forest-cli auth create-token --perm admin --expire-in "1 year"
+
+# Get full API connection info for use in FULLNODE_API_INFO
+forest-cli auth api-info --perm admin
+```
+
+</Accordion>
+
+<Accordion title="net — Manage P2P network">
+
+```bash
+forest-cli net <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `listen` | List libp2p swarm listener addresses |
+| `info` | Show libp2p swarm network info |
+| `peers [-a]` | List connected peers (`-a` shows agent name) |
+| `connect <ADDRESS>` | Connect to a peer by multiaddress (must include `/p2p/` protocol) |
+| `disconnect <ID>` | Disconnect from a peer by peer ID |
+| `reachability` | Print internet reachability information |
+
+**Examples:**
+
+```bash
+# List connected peers with agent names
+forest-cli net peers --agent
+
+# Connect to a specific peer
+forest-cli net connect /ip4/1.2.3.4/tcp/1347/p2p/12D3KooW...
+
+# Disconnect from a peer
+forest-cli net disconnect 12D3KooW...
+```
+
+</Accordion>
+
+<Accordion title="sync — Chain synchronization">
+
+```bash
+forest-cli sync <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `status` | Print the current sync status |
+| `wait [-w]` | Display continuous sync data until sync is complete (`-w` keeps watching after sync) |
+| `check-bad -c <CID>` | Check if a block is marked bad and why |
+| `mark-bad -c <CID>` | Mark a block as bad |
+
+**Examples:**
+
+```bash
+# Check sync status
+forest-cli sync status
+
+# Wait for sync to complete (exits when done)
+forest-cli sync wait
+
+# Keep watching sync progress indefinitely
+forest-cli sync wait -w
+
+# Check if a block is in the bad block cache
+forest-cli sync check-bad -c bafy2bzacedxyz...
+```
+
+</Accordion>
+
+<Accordion title="mpool — Message pool">
+
+```bash
+forest-cli mpool <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `pending [--local] [--cids] [--to <ADDR>] [--from <ADDR>]` | List pending messages |
+| `nonce <ADDRESS>` | Get the current nonce for an address |
+| `stat [--basefee-lookback <N>] [--local]` | Print mempool statistics |
+
+**Examples:**
+
+```bash
+# Show all pending messages
+forest-cli mpool pending
+
+# Show pending messages from a specific address
+forest-cli mpool pending --from f1abc...
+
+# Show only CIDs of pending messages
+forest-cli mpool pending --cids
+
+# Get nonce for an address
+forest-cli mpool nonce f1abc...
+
+# Print mempool stats looking back 120 blocks for basefee
+forest-cli mpool stat --basefee-lookback 120
+```
+
+</Accordion>
+
+<Accordion title="state — Chain state queries">
+
+```bash
+forest-cli state <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `fetch <ROOT> [-s <FILE>]` | Fetch a state root and optionally save it as a CAR file |
+| `compute --epoch <N> [-n <N>] [-v]` | Compute state trees for one or more epochs |
+| `read-state` | Read the state of an actor |
+| `actor-cids` | Return built-in actor bundle CIDs for the current network |
+
+**Examples:**
+
+```bash
+# Compute state at epoch 1000000
+forest-cli state compute --epoch 1000000
+
+# Compute 5 epochs starting at 1000000 with verbose output
+forest-cli state compute --epoch 1000000 --n-epochs 5 --verbose
+
+# Fetch a state root and save it to a file
+forest-cli state fetch bafy2bzacedxyz... --save-to-file state.car
+```
+
+</Accordion>
+
+<Accordion title="config — Node configuration">
+
+```bash
+forest-cli config <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `dump` | Dump the default configuration to stdout |
+
+**Example:**
+
+```bash
+# Dump the default config as a TOML template
+forest-cli config dump > /etc/forest/config.toml
+```
+
+</Accordion>
+
+<Accordion title="snapshot — Manage snapshots">
+
+```bash
+forest-cli snapshot <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `export [OPTIONS]` | Export a snapshot of the chain |
+| `export-status` | Show status of the current export |
+| `export-cancel` | Cancel the current export |
+| `export-diff [OPTIONS]` | Export a diff snapshot between two epochs |
+
+**`forest-cli snapshot export` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output-path <PATH>` | Output path (default: `./forest_snapshot_{chain}_{date}_height_{epoch}.car.zst`) |
+| `--skip-checksum` | Skip creating a checksum file |
+| `--dry-run` | Don't write the archive, just show what would be exported |
+| `-t, --tipset <TIPSET>` | Starting tipset (default: chain head) |
+| `-d, --depth <N>` | Number of state trees to include (default: 2000; 0 for chain spine only) |
+| `--format <v1\|v2>` | Snapshot format (default: v2) |
+
+**Examples:**
+
+```bash
+# Export a full snapshot to current directory
+forest-cli snapshot export
+
+# Export to a specific path with custom depth
+forest-cli snapshot export --output-path /snapshots/my-snapshot.car.zst --depth 900
+
+# Check status of ongoing export
+forest-cli snapshot export-status
+
+# Cancel an in-progress export
+forest-cli snapshot export-cancel
+```
+
+</Accordion>
+
+<Accordion title="info — Node information">
+
+```bash
+forest-cli info show
+```
+
+Prints a summary of the node: chain, sync status, peer count, and version.
+
+**Example:**
+
+```bash
+forest-cli info show
+```
+
+</Accordion>
+
+<Accordion title="shutdown — Shut down the daemon">
+
+```bash
+forest-cli shutdown [--force]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Skip confirmation prompt |
+
+**Example:**
+
+```bash
+forest-cli shutdown --force
+```
+
+</Accordion>
+
+<Accordion title="healthcheck — Node health">
+
+```bash
+forest-cli healthcheck <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `ready [--wait] [--healthcheck-port <PORT>]` | Display readiness status |
+| `live` | Display liveness status |
+| `healthy` | Display overall health status |
+
+**Examples:**
+
+```bash
+# Check if the node is ready (exit non-zero if not)
+forest-cli healthcheck ready
+
+# Wait until the node becomes ready
+forest-cli healthcheck ready --wait
+
+# Use a non-default healthcheck port
+forest-cli healthcheck ready --healthcheck-port 9000
+```
+
+</Accordion>
+
+<Accordion title="f3 — Fast Finality (F3)">
+
+```bash
+forest-cli f3 <COMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `manifest [--output text\|json]` | Get the current F3 manifest |
+| `status` | Check F3 status |
+| `certs get [INSTANCE] [--output text\|json]` | Get a finality certificate by instance ID (or latest) |
+| `certs list [RANGE] [--output text\|json] [--limit N] [--reverse]` | List a range of finality certificates |
+| `powertable get [INSTANCE] [--ec]` | Get the F3 power table for an instance |
+| `powertable get-proportion [--instance N] [--ec] [ACTOR_IDS]...` | Get the total power proportion for a list of actors |
+| `ready [--wait] [--threshold N] [--no-progress-timeout <DURATION>]` | Check if F3 is in sync |
+
+**Examples:**
+
+```bash
+# Get the current F3 manifest
+forest-cli f3 manifest
+
+# Get the latest finality certificate as JSON
+forest-cli f3 certs get --output json
+
+# List the last 10 finality certificates in reverse order
+forest-cli f3 certs list --limit 10 --reverse
+
+# Wait until F3 is in sync
+forest-cli f3 ready --wait
+
+# Get the F3 power table for the latest instance
+forest-cli f3 powertable get
+```
+
+</Accordion>
+
+<Accordion title="wait-api — Wait for the API to come online">
+
+```bash
+forest-cli wait-api
+```
+
+Blocks until the Forest JSON-RPC API is reachable. Useful in scripts and container startup sequences.
+
+</Accordion>
+
+</AccordionGroup>

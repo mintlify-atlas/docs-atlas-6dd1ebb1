@@ -1,0 +1,139 @@
+---
+title: Syncing a node
+description: Start syncing a Forest node on mainnet or calibnet and monitor sync progress.
+---
+
+## How syncing works
+
+Forest syncs the Filecoin blockchain using a snapshot-based approach. When you start the daemon, it connects to bootstrap peers and in parallel fetches the latest snapshot from [Forest's snapshot service](https://forest-archive.chainsafe.dev/latest/). Once the snapshot is downloaded and loaded, the node continues syncing forward by requesting new tipsets from its peers.
+
+<Warning>
+Syncing from genesis (tipset 0) is generally infeasible due to the size of the Filecoin chain history. All nodes joining the network should sync from a snapshot. This is the default behavior of Forest.
+</Warning>
+
+The `--auto-download-snapshot` flag tells Forest to download a snapshot automatically without prompting if one is not already present. This is recommended for first-time setups.
+
+## Starting a node
+
+<Tabs>
+  <Tab title="Mainnet">
+
+Run the Forest daemon with automatic snapshot download:
+
+```bash
+forest --auto-download-snapshot
+```
+
+Forest will:
+
+1. Connect to mainnet bootstrap peers
+2. Download the latest mainnet snapshot from the Forest snapshot service
+3. Import the snapshot into the local database
+4. Begin syncing forward from the snapshot epoch
+
+<Note>
+The mainnet snapshot is several hundred gigabytes. Ensure you have sufficient disk space before starting. See [Hardware requirements](/getting-started/hardware-requirements) for details.
+</Note>
+
+  </Tab>
+  <Tab title="Calibnet (testnet)">
+
+Calibnet is the recommended network for development and testing. Its snapshot is much smaller than mainnet.
+
+```bash
+forest --chain calibnet --auto-download-snapshot
+```
+
+Forest will:
+
+1. Connect to calibnet bootstrap peers
+2. Download the latest calibnet snapshot
+3. Import the snapshot and begin syncing forward
+
+  </Tab>
+</Tabs>
+
+## Monitoring sync status
+
+Once the daemon is running, you can query its sync progress from another terminal using `forest-cli`:
+
+```bash
+forest-cli sync status
+```
+
+This prints the current sync state, the base epoch, and the target epoch.
+
+### Common CLI commands
+
+```bash
+forest-cli info show        # Overall node status
+forest-cli chain head       # Current chain head tipset
+forest-cli sync status      # Sync progress
+forest-cli net peers        # Connected peers
+```
+
+## Connecting the CLI to the daemon
+
+`forest-cli` connects to the daemon over its RPC interface. By default, it looks for a local daemon on the default port with the admin token saved to the data directory.
+
+To connect to a daemon running on a different host or port, set the `FULLNODE_API_INFO` environment variable:
+
+```bash
+export FULLNODE_API_INFO="<token>:/ip4/<host>/tcp/<port>/http"
+```
+
+For example, to connect to a local daemon with an explicit token:
+
+```bash
+export FULLNODE_API_INFO="<admin-token>:/ip4/127.0.0.1/tcp/2345/http"
+forest-cli sync status
+```
+
+You can also pass the token inline without exporting:
+
+```bash
+FULLNODE_API_INFO="<token>:/ip4/127.0.0.1/tcp/2345/http" forest-cli sync status
+```
+
+Or use the `--token` flag directly:
+
+```bash
+forest-cli --token <admin-token> sync status
+```
+
+<Tip>
+The admin token is printed to stdout when the Forest daemon starts and is also saved to the data directory. If you started Forest with `--save-token <path>`, check that path for the token.
+</Tip>
+
+<Note>
+If `FULLNODE_API_INFO` does not include a token, remove the leading colon. The format without a token is: `"/ip4/<host>/tcp/<port>/http"`.
+</Note>
+
+## What to expect during initial sync
+
+Initial sync has two phases:
+
+1. **Snapshot download and import** — Forest downloads the snapshot archive and imports it into the local database. Depending on your disk speed and network connection, this can take anywhere from a few minutes (calibnet) to several hours (mainnet).
+
+2. **Catching up to the chain head** — After the snapshot is imported, Forest requests the tipsets between the snapshot epoch and the current head from its peers. This phase is much faster and typically completes within minutes.
+
+Once caught up, Forest will continue following the chain head in real time as new blocks are produced (approximately every 30 seconds on Filecoin).
+
+## Snapshot links
+
+You can also download snapshots manually:
+
+<CardGroup cols={2}>
+  <Card title="Mainnet snapshot" icon="server" href="https://forest-archive.chainsafe.dev/latest/mainnet/">
+    Latest mainnet snapshot from the Forest archive.
+  </Card>
+  <Card title="Calibnet snapshot" icon="flask" href="https://forest-archive.chainsafe.dev/latest/calibnet/">
+    Latest calibnet snapshot from the Forest archive.
+  </Card>
+</CardGroup>
+
+To import a snapshot manually instead of using `--auto-download-snapshot`:
+
+```bash
+forest --import-snapshot /path/to/snapshot.car
+```
